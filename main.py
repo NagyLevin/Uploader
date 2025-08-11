@@ -79,9 +79,65 @@ def wait_for_nonempty_textarea(page, locator_str, seconds=OUTPUT_WAIT_SECS):
     print("[DEBUG] Timeout a kimenet textarea-ra várva.")
     return last
 
+def click_submit_with_retries(page):
+    """Megbízható 'Submit' kattintás több próbával."""
+    btn_css = "gradio-app #component-5"
+    btn = page.locator(btn_css)
+    # várjuk, míg a gomb megjelenik
+    btn.wait_for(state="attached", timeout=10_000)
+    # görgessünk oda
+    try:
+        btn.scroll_into_view_if_needed(timeout=2_000)
+    except Exception:
+        pass
+    time.sleep(0.3)
+
+    # ha disabled, várjunk kicsit
+    for _ in range(10):
+        try:
+            dis = btn.get_attribute("disabled")
+            if not dis:
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    # 1. normál katt
+    try:
+        btn.click()
+        print("[DEBUG] Submit: normál click.")
+        return True
+    except Exception as e:
+        print("[DEBUG] Submit normál click hiba:", e)
+
+    time.sleep(0.5)
+    # 2. force click
+    try:
+        btn.click(force=True)
+        print("[DEBUG] Submit: force click.")
+        return True
+    except Exception as e:
+        print("[DEBUG] Submit force click hiba:", e)
+
+    time.sleep(0.5)
+    # 3. JS click
+    try:
+        page.evaluate("""sel => {
+            const el = document.querySelector(sel);
+            if (el) el.click();
+        }""", btn_css)
+        print("[DEBUG] Submit: JS click.")
+        return True
+    except Exception as e:
+        print("[DEBUG] Submit JS click hiba:", e)
+
+    return False
+
 # --- FŐPROGRAM ----------------------------------------------------------------
 
 def main():
+    sleep_t=0
+
     files = [p for p in FILES_DIR.glob("*") if p.is_file()]
     if not files:
         print(f"[HIBA] Nincs fájl a '{FILES_DIR}' mappában.")
@@ -96,10 +152,10 @@ def main():
         print("[DEBUG] Navigálás:", BASE_URL)
         page.goto(BASE_URL, timeout=NAV_TIMEOUT)
         page.wait_for_load_state("domcontentloaded")
-        time.sleep(2)
+        time.sleep(sleep_t)
 
         list_all_buttons(page)
-        time.sleep(2)
+        time.sleep(sleep_t)
 
         with OUT_TXT.open("w", encoding="utf-8") as out:
             for f in files:
@@ -107,22 +163,22 @@ def main():
 
                 # 0) Clear (ha van)
                 try:
-                    page.locator("gradio-app #component-1").click(timeout=1500)
+                    page.locator("gradio-app #component-4").click(timeout=1500)
                     print("[DEBUG] 'Clear' megnyomva.")
                 except Exception:
                     print("[DEBUG] 'Clear' nem kattintható / nincs.")
-                time.sleep(2)
+                time.sleep(sleep_t)
 
-                # --- 1) Feltöltés: előbb forrás: Upload file (ha kell) -----------
+                # 1) forrás: Upload file (biztos ami biztos)
                 try:
                     page.locator('gradio-app #component-2 .source-selection button[aria-label="Upload file"]').first.click(timeout=1500, force=True)
                     print("[DEBUG] Source: 'Upload file' kiválasztva.")
                 except Exception:
                     print("[DEBUG] Source kiválasztás kihagyva (valszeg már ez az aktív).")
-                time.sleep(2)
+                time.sleep(sleep_t)
 
-                # --- 2) File chooser-es beadás (első próbálkozás) ----------------
-                upload_area = page.locator("gradio-app #component-2 .audio-container button").first
+                # 2) File beadása
+                upload_area   = page.locator("gradio-app #component-2 .audio-container button").first
                 file_input_sel = "gradio-app #component-2 input[data-testid='file-upload']"
 
                 used_file_chooser = False
@@ -135,68 +191,33 @@ def main():
                     print("[DEBUG] Fájl beadva file chooserrel.")
                 except Exception as e:
                     print("[DEBUG] File chooser nem jött fel (", e, ") -> B-terv: közvetlen input")
-                time.sleep(2)
+                time.sleep(sleep_t)
 
-                # --- 2/B) Direkt input[type=file] feltöltés, ha kellett -----------
-                if not used_file_chooser:
-                    appeared = False
-                    for i in range(8):
-                        try:
-                            page.locator(file_input_sel).wait_for(state="attached", timeout=1000)
-                            appeared = True
-                            break
-                        except Exception:
-                            try:
-                                upload_area.click(timeout=1000)
-                            except Exception:
-                                pass
-                    if not appeared:
-                        dump_debug(page, reason="input[file] nem jelent meg (B-terv előtt)")
-                        raise RuntimeError("Nem érhető el az input[type=file].")
 
-                    page.locator(file_input_sel).set_input_files(str(f))
-                    print("[DEBUG] Fájl beadva közvetlen a file inputnak.")
-                time.sleep(2)
 
-                # --- 2/C) Ellenőrzés: tényleg bent van a fájl? --------------------
-                if not wait_for_file_selected(page, file_input_sel, seconds=10):
-                    try:
-                        page.locator(file_input_sel).set_input_files(str(f))
-                        if not wait_for_file_selected(page, file_input_sel, seconds=8):
-                            dump_debug(page, reason="file_input nem kapott fájlt")
-                            raise RuntimeError("A fájl beadása nem sikerült (files.length==0).")
-                        else:
-                            print("[DEBUG] Második kísérletre az input felvette a fájlt.")
-                    except Exception:
-                        dump_debug(page, reason="file_input set_input_files kivétel")
-                        raise
-                time.sleep(2)
+                # 3) Submit – megbízható kattintás több módszerrel
+                ok = click_submit_with_retries(page)
+                time.sleep(sleep_t)
+                if not ok:
+                    dump_debug(page, reason="Submit nem kattintható")
+                    raise RuntimeError("A 'Submit' gombot nem sikerült megnyomni.")
 
-                # --- 3) Submit ----------------------------------------------------
-                submit_btn = page.locator("gradio-app #component-5")
-                try:
-                    submit_btn.click()
-                    print("[DEBUG] 'Submit' megnyomva.")
-                except Exception as e:
-                    dump_debug(page, reason="Submit katt hiba")
-                    raise RuntimeError("Nem találtam a 'Submit' gombot (#component-5).") from e
-                time.sleep(2)
-
+                # ha nem látszik, hogy futna bármi, még egy próbálkozás
                 try:
                     has_processing = page.locator("gradio-app .progress-text").count() > 0
                     if not has_processing:
-                        print("[DEBUG] Újrapróbálom a 'Submit'-et...")
-                        submit_btn.click()
+                        print("[DEBUG] Nem látszik 'processing' -> még egy submit katt.")
+                        click_submit_with_retries(page)
+                        time.sleep(sleep_t)
                 except Exception:
                     pass
-                time.sleep(2)
 
-                # --- 4) Kimenet ---------------------------------------------------
+                # 4) Kimenet
                 textarea_sel = "gradio-app #component-10 textarea[data-testid='textbox']"
                 text_value = wait_for_nonempty_textarea(page, textarea_sel, seconds=OUTPUT_WAIT_SECS)
-                time.sleep(2)
+                time.sleep(sleep_t)
 
-                # --- 5) TextGrid link --------------------------------------------
+                # 5) TextGrid link
                 tg_link = ""
                 try:
                     a = page.locator("gradio-app #component-9 .file-preview a").first
@@ -206,9 +227,9 @@ def main():
                         print("[DEBUG] TextGrid:", tg_link)
                 except Exception:
                     print("[DEBUG] Nincs TextGrid link (most).")
-                time.sleep(2)
+                time.sleep(sleep_t)
 
-                # --- 6) Eredmény ID ----------------------------------------------
+                # 6) Eredmény ID
                 res_id = ""
                 try:
                     id_div = page.locator("gradio-app #component-12 .prose div").nth(1)
@@ -218,9 +239,9 @@ def main():
                         print("[DEBUG] Eredmény ID:", res_id)
                 except Exception:
                     print("[DEBUG] Nincs Eredmény ID (most).")
-                time.sleep(2)
+                time.sleep(sleep_t)
 
-                # --- 7) Mentés ----------------------------------------------------
+                # 7) Mentés
                 with OUT_TXT.open("a", encoding="utf-8") as aout:
                     aout.write(f"=== {f.name} ===\n")
                     if res_id:
@@ -230,7 +251,7 @@ def main():
                     aout.write("\n-- Kimenet --\n")
                     aout.write(text_value if text_value else "[Nincs kimenet vagy időtúllépés]\n")
                     aout.write("\n\n")
-                time.sleep(2)
+                time.sleep(sleep_t)
 
         context.close()
         browser.close()
