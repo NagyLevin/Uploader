@@ -1,11 +1,14 @@
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 import pathlib, time
+import time
 
-# --- KONFIG ---
+# Conf
 BASE_URL    = "https://phon.nytud.hu/beast2/"
-FILES_DIR   = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")
-OUTPUT_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")  # <-- ide mentünk
+FILES_DIR   = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio") #/mnt/d/feldolgozando/MIA-810002 #/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio
+OUTPUT_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/leiratok")  # <-- ide mentünk
 #OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+_start_time = None
+sleep_t = 2
 
 HEADLESS    = False          # debughoz False; ha stabil, mehet True megmutaja a weboldalt, és az automatizállt folyamatot
 NAV_TIMEOUT = 60_000
@@ -15,8 +18,21 @@ OUTPUT_WAIT_SECS = 180
 DEBUG_HTML = pathlib.Path("debug_page.html")
 DEBUG_PNG  = pathlib.Path("debug.png")
 
-# --- SEGÉDFÜGGVÉNYEK ---------------------------------------------------------
-
+# Fuggvenyek
+def timer(action="start"):
+    global _start_time
+    if action == "start":
+        _start_time = time.time()
+        print("Timer elindítva...")
+    elif action == "stop":
+        if _start_time is None:
+            print("Először indítsd el a timert!")
+        else:
+            elapsed = time.time() - _start_time
+            print(f"Eltelt idő: {elapsed:.3f} másodperc")
+            _start_time = None
+    else:
+        print("Ismeretlen parancs. Használat: timer('start') vagy timer('stop')")
 def dump_debug(page, reason=""):
     try:
         DEBUG_HTML.write_text(page.content(), encoding="utf-8")
@@ -56,7 +72,7 @@ def wait_for_file_selected(page, input_sel, seconds=10):
                 return True
         except Exception:
             pass
-        time.sleep(0.4)
+        time.sleep(sleep_t)
     return False
 
 def wait_for_nonempty_textarea(page, locator_str, seconds=OUTPUT_WAIT_SECS):
@@ -75,7 +91,7 @@ def wait_for_nonempty_textarea(page, locator_str, seconds=OUTPUT_WAIT_SECS):
                 return val
         except Exception:
             pass
-        time.sleep(1)
+        time.sleep(sleep_t)
         last = val if 'val' in locals() else last
     print("[DEBUG] Timeout a kimenet textarea-ra várva.")
     return last
@@ -89,7 +105,7 @@ def click_submit_with_retries(page):
         btn.scroll_into_view_if_needed(timeout=2_000)
     except Exception:
         pass
-    time.sleep(0.3)
+    time.sleep(sleep_t)
 
     # ha disabled, várjunk kicsit
     for _ in range(10):
@@ -99,7 +115,7 @@ def click_submit_with_retries(page):
                 break
         except Exception:
             pass
-        time.sleep(0.5)
+        time.sleep(sleep_t)
 
     try:
         btn.click()
@@ -108,7 +124,7 @@ def click_submit_with_retries(page):
     except Exception as e:
         print("[DEBUG] Submit normál click hiba:", e)
 
-    time.sleep(0.5)
+    time.sleep(sleep_t)
     try:
         btn.click(force=True)
         print("[DEBUG] Submit: force click.")
@@ -116,7 +132,7 @@ def click_submit_with_retries(page):
     except Exception as e:
         print("[DEBUG] Submit force click hiba:", e)
 
-    time.sleep(0.5)
+    time.sleep(sleep_t)
     try:
         page.evaluate("""sel => { const el = document.querySelector(sel); if (el) el.click(); }""", btn_css)
         print("[DEBUG] Submit: JS click.")
@@ -143,16 +159,21 @@ def tick_checkboxes(page):
         except Exception as e:
             print(f"[WARN] Nem sikerült pipálni: {name} -> {e}")
 
-# --- FŐPROGRAM ----------------------------------------------------------------
-
+# main
 def main():
     # minden lépés után ennyit vár; gyorsításhoz állítsd 0-ra
-    sleep_t = 0
+    sleep_t = 2
 
-    files = [p for p in FILES_DIR.glob("*") if p.is_file()]
+    allowed_exts = {".mp3", ".m4a"}
+    all_files = [p for p in FILES_DIR.glob("*") if p.is_file()]
+    files = [p for p in all_files if p.suffix.lower() in allowed_exts]
+
     if not files:
-        print(f"[HIBA] Nincs fájl a '{FILES_DIR}' mappában.")
+        print(f"[HIBA] Nincs feldolgozható .mp3/.m4a fájl a '{FILES_DIR}' mappában.")
         return
+    skipped = [p for p in all_files if p.suffix.lower() not in allowed_exts]
+    if skipped:
+        print("[INFO] Kihagyott fájlok (nem mp3/m4a):", ", ".join(s.name for s in skipped))
 
     with sync_playwright() as p:
         browser  = p.chromium.launch(headless=HEADLESS)
@@ -208,6 +229,8 @@ def main():
             # 2/D) Pipa az extrákra (feltöltés után, submit előtt!)
             tick_checkboxes(page)
             time.sleep(sleep_t)
+
+            #timer("start") #ellenörizzuk mennyi ideig tartott a folyamat
 
             # 3) Submit – megbízható kattintás
             ok = click_submit_with_retries(page)
@@ -266,6 +289,7 @@ def main():
                 aout.write(text_value if text_value else "[Nincs kimenet vagy időtúllépés]\n")
             print(f"[INFO] Mentve: {out_file}")
             time.sleep(sleep_t)
+            timer("stop")  # folyamat vége, kiírja az eltelt időt
 
         context.close()
         browser.close()
