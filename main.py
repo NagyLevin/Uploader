@@ -4,7 +4,7 @@ import time
 
 # Conf
 BASE_URL    = "https://phon.nytud.hu/beast2/"
-FILES_DIR   = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio") #/mnt/d/feldolgozando/MIA-810002 #/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio
+FILES_DIR   = pathlib.Path("/mnt/d/feldolgozando/MIA-810002") #/mnt/d/feldolgozando/MIA-810002 #/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio
 OUTPUT_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/leiratok")  # <-- ide mentünk
 #OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 _start_time = None
