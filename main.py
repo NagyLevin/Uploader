@@ -2,11 +2,12 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 import pathlib, time
 
 # --- KONFIG ---
-BASE_URL   = "https://phon.nytud.hu/beast2/"
-FILES_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")
-OUT_TXT    = pathlib.Path("kimenet.txt")
+BASE_URL    = "https://phon.nytud.hu/beast2/"
+FILES_DIR   = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")
+OUTPUT_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")  # <-- ide mentünk
+#OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-HEADLESS   = False          # debughoz False; ha stabil, mehet True
+HEADLESS    = False          # debughoz False; ha stabil, mehet True megmutaja a weboldalt, és az automatizállt folyamatot
 NAV_TIMEOUT = 60_000
 STEP_TIMEOUT = 30_000
 OUTPUT_WAIT_SECS = 180
@@ -90,9 +91,11 @@ def click_submit_with_retries(page):
         pass
     time.sleep(0.3)
 
+    # ha disabled, várjunk kicsit
     for _ in range(10):
         try:
-            if not btn.get_attribute("disabled"):
+            dis = btn.get_attribute("disabled")
+            if not dis:
                 break
         except Exception:
             pass
@@ -123,57 +126,28 @@ def click_submit_with_retries(page):
 
     return False
 
-def ensure_checkbox_checked(page, label_text: str):
-    """
-    Bepipál egy checkboxot a 'Extra Features' blokkban.
-    Több szelektorral próbálkozik: name/title alapján, majd label szöveg alapján.
-    """
-    container = "gradio-app #component-6"
+def tick_checkboxes(page):
+    """Bepipálja az 'Extra Features' két checkboxát (#component-6)."""
+    # Angol DOM szerint: "Punctuation and Capitalization" és "Diarization"
+    cb1 = page.locator("gradio-app #component-6 input[type='checkbox'][name='Punctuation and Capitalization']").first
+    cb2 = page.locator("gradio-app #component-6 input[type='checkbox'][name='Diarization']").first
 
-    # 1) name
-    sel = f"{container} input[type='checkbox'][name='{label_text}']"
-    loc = page.locator(sel)
-    if loc.count():
-        loc.first.wait_for(state="attached", timeout=2000)
-        if not loc.first.is_checked():
-            loc.first.check(force=True)
-        print(f"[DEBUG] Checkbox '{label_text}' (name) bepipálva.")
-        return
-
-    # 2) title
-    sel = f"{container} input[type='checkbox'][title='{label_text}']"
-    loc = page.locator(sel)
-    if loc.count():
-        loc.first.wait_for(state="attached", timeout=2000)
-        if not loc.first.is_checked():
-            loc.first.check(force=True)
-        print(f"[DEBUG] Checkbox '{label_text}' (title) bepipálva.")
-        return
-
-    # 3) label has-text
-    lab = page.locator(f"{container} label", has_text=label_text).first
-    if lab.count():
+    for name, cb in [("Punctuation and Capitalization", cb1), ("Diarization", cb2)]:
         try:
-            # próbáljuk az inputot megtalálni a label alatt
-            inp = lab.locator("input[type='checkbox']").first
-            inp.wait_for(state="attached", timeout=2000)
-            if not inp.is_checked():
-                inp.check(force=True)
-            print(f"[DEBUG] Checkbox '{label_text}' (label) bepipálva.")
-            return
-        except Exception:
-            pass
-        # ha nincs input belül, kattintsunk a labelre
-        lab.click(force=True)
-        print(f"[DEBUG] Checkbox '{label_text}' (label click) bepipálva.")
-        return
-
-    print(f"[WARN] Nem találtam a checkboxot: {label_text!r}")
+            cb.wait_for(state="attached", timeout=3000)
+            if not cb.is_checked():
+                cb.check(force=True)
+                print(f"[DEBUG] Checkbox bepipálva: {name}")
+            else:
+                print(f"[DEBUG] Checkbox már pipálva: {name}")
+        except Exception as e:
+            print(f"[WARN] Nem sikerült pipálni: {name} -> {e}")
 
 # --- FŐPROGRAM ----------------------------------------------------------------
 
 def main():
-    sleep_t = 0  # ha szeretnél "lassítást", állítsd 2-re
+    # minden lépés után ennyit vár; gyorsításhoz állítsd 0-ra
+    sleep_t = 0
 
     files = [p for p in FILES_DIR.glob("*") if p.is_file()]
     if not files:
@@ -194,115 +168,108 @@ def main():
         list_all_buttons(page)
         time.sleep(sleep_t)
 
-        with OUT_TXT.open("w", encoding="utf-8") as out:
-            for f in files:
-                print("\n[INFO] Feltöltés:", f.name)
+        for f in files:
+            print("\n[INFO] Feltöltés:", f.name)
 
-                # 0) Clear (ha van)
-                try:
-                    page.locator("gradio-app #component-4").click(timeout=1500)
-                    print("[DEBUG] 'Clear' megnyomva.")
-                except Exception:
-                    print("[DEBUG] 'Clear' nem kattintható / nincs.")
-                time.sleep(sleep_t)
+            # 0) Clear (ha van)
+            try:
+                page.locator("gradio-app #component-4").click(timeout=1500)
+                print("[DEBUG] 'Clear' megnyomva.")
+            except Exception:
+                print("[DEBUG] 'Clear' nem kattintható / nincs.")
+            time.sleep(sleep_t)
 
-                # 1) forrás: Upload file (biztos ami biztos)
-                try:
-                    page.locator('gradio-app #component-2 .source-selection button[aria-label="Upload file"]').first.click(timeout=1500, force=True)
-                    print("[DEBUG] Source: 'Upload file' kiválasztva.")
-                except Exception:
-                    print("[DEBUG] Source kiválasztás kihagyva (valszeg már ez az aktív).")
-                time.sleep(sleep_t)
+            # 1) forrás: Upload file (biztos ami biztos)
+            try:
+                page.locator('gradio-app #component-2 .source-selection button[aria-label="Upload file"]').first.click(timeout=1500, force=True)
+                print("[DEBUG] Source: 'Upload file' kiválasztva.")
+            except Exception:
+                print("[DEBUG] Source kiválasztás kihagyva (valszeg már ez az aktív).")
+            time.sleep(sleep_t)
 
-                # 2) File beadása
-                upload_area    = page.locator("gradio-app #component-2 .audio-container button").first
-                file_input_sel = "gradio-app #component-2 input[data-testid='file-upload']"
+            # 2) File beadása
+            upload_area    = page.locator("gradio-app #component-2 .audio-container button").first
+            file_input_sel = "gradio-app #component-2 input[data-testid='file-upload']"
 
-                used_file_chooser = False
-                try:
-                    with page.expect_file_chooser(timeout=5000) as fc_info:
-                        upload_area.click()
-                    chooser = fc_info.value
-                    chooser.set_files(str(f))
-                    used_file_chooser = True
-                    print("[DEBUG] Fájl beadva file chooserrel.")
-                except Exception as e:
-                    print("[DEBUG] File chooser nem jött fel (", e, ") -> B-terv: közvetlen input")
-                time.sleep(sleep_t)
+            used_file_chooser = False
+            try:
+                with page.expect_file_chooser(timeout=5000) as fc_info:
+                    upload_area.click()
+                chooser = fc_info.value
+                chooser.set_files(str(f))
+                used_file_chooser = True
+                print("[DEBUG] Fájl beadva file chooserrel.")
+            except Exception as e:
+                print("[DEBUG] File chooser nem jött fel (", e, ") -> B-terv: közvetlen input")
+            time.sleep(sleep_t)
 
-                if not used_file_chooser:
-                    page.locator(file_input_sel).set_input_files(str(f))
-                    print("[DEBUG] Fájl beadva közvetlen a file inputnak.")
-                time.sleep(sleep_t)
 
-                # 2/c) (opcionális) ellenőrzés – ha kell:
-                # wait_for_file_selected(page, file_input_sel, seconds=8)
 
-                # 2/d) EXTRA FEATURES – pipáljuk be mindkettőt
-                ensure_checkbox_checked(page, "Punctuation and Capitalization")
-                ensure_checkbox_checked(page, "Diarization")
-                time.sleep(sleep_t)
+            # 2/D) Pipa az extrákra (feltöltés után, submit előtt!)
+            tick_checkboxes(page)
+            time.sleep(sleep_t)
 
-                # 3) Submit – megbízható kattintás több módszerrel
-                ok = click_submit_with_retries(page)
-                time.sleep(sleep_t)
-                if not ok:
-                    dump_debug(page, reason="Submit nem kattintható")
-                    raise RuntimeError("A 'Submit' gombot nem sikerült megnyomni.")
+            # 3) Submit – megbízható kattintás
+            ok = click_submit_with_retries(page)
+            time.sleep(sleep_t)
+            if not ok:
+                dump_debug(page, reason="Submit nem kattintható")
+                raise RuntimeError("A 'Submit' gombot nem sikerült megnyomni.")
 
-                try:
-                    has_processing = page.locator("gradio-app .progress-text").count() > 0
-                    if not has_processing:
-                        print("[DEBUG] Nem látszik 'processing' -> még egy submit katt.")
-                        click_submit_with_retries(page)
-                        time.sleep(sleep_t)
-                except Exception:
-                    pass
+            # ha nem látszik processing, még egy próbálkozás
+            try:
+                has_processing = page.locator("gradio-app .progress-text").count() > 0
+                if not has_processing:
+                    print("[DEBUG] Nem látszik 'processing' -> még egy submit katt.")
+                    click_submit_with_retries(page)
+                    time.sleep(sleep_t)
+            except Exception:
+                pass
 
-                # 4) Kimenet
-                textarea_sel = "gradio-app #component-10 textarea[data-testid='textbox']"
-                text_value = wait_for_nonempty_textarea(page, textarea_sel, seconds=OUTPUT_WAIT_SECS)
-                time.sleep(sleep_t)
+            # 4) Kimenet
+            textarea_sel = "gradio-app #component-10 textarea[data-testid='textbox']"
+            text_value = wait_for_nonempty_textarea(page, textarea_sel, seconds=OUTPUT_WAIT_SECS)
+            time.sleep(sleep_t)
 
-                # 5) TextGrid link
-                tg_link = ""
-                try:
-                    a = page.locator("gradio-app #component-9 .file-preview a").first
-                    a.wait_for(state="attached", timeout=2000)
-                    tg_link = a.get_attribute("href") or ""
-                    if tg_link:
-                        print("[DEBUG] TextGrid:", tg_link)
-                except Exception:
-                    print("[DEBUG] Nincs TextGrid link (most).")
-                time.sleep(sleep_t)
+            # 5) TextGrid link
+            tg_link = ""
+            try:
+                a = page.locator("gradio-app #component-9 .file-preview a").first
+                a.wait_for(state="attached", timeout=2000)
+                tg_link = a.get_attribute("href") or ""
+                if tg_link:
+                    print("[DEBUG] TextGrid:", tg_link)
+            except Exception:
+                print("[DEBUG] Nincs TextGrid link (most).")
+            time.sleep(sleep_t)
 
-                # 6) Eredmény ID
-                res_id = ""
-                try:
-                    id_div = page.locator("gradio-app #component-12 .prose div").nth(1)
-                    id_div.wait_for(state="attached", timeout=2000)
-                    res_id = (id_div.inner_text() or "").strip()
-                    if res_id:
-                        print("[DEBUG] Eredmény ID:", res_id)
-                except Exception:
-                    print("[DEBUG] Nincs Eredmény ID (most).")
-                time.sleep(sleep_t)
+            # 6) Eredmény ID
+            res_id = ""
+            try:
+                id_div = page.locator("gradio-app #component-12 .prose div").nth(1)
+                id_div.wait_for(state="attached", timeout=2000)
+                res_id = (id_div.inner_text() or "").strip()
+                if res_id:
+                    print("[DEBUG] Eredmény ID:", res_id)
+            except Exception:
+                print("[DEBUG] Nincs Eredmény ID (most).")
+            time.sleep(sleep_t)
 
-                # 7) Mentés
-                with OUT_TXT.open("a", encoding="utf-8") as aout:
-                    aout.write(f"=== {f.name} ===\n")
-                    if res_id:
-                        aout.write(f"ID: {res_id}\n")
-                    if tg_link:
-                        aout.write(f"TextGrid: {tg_link}\n")
-                    aout.write("\n-- Kimenet --\n")
-                    aout.write(text_value if text_value else "[Nincs kimenet vagy időtúllépés]\n")
-                    aout.write("\n\n")
-                time.sleep(sleep_t)
+            # 7) Mentés – fájlonként külön TXT az OUTPUT_DIR-be
+            out_file = OUTPUT_DIR / f"{f.stem}.txt"
+            with out_file.open("w", encoding="utf-8") as aout:
+                if res_id:
+                    aout.write(f"ID: {res_id}\n")
+                #if tg_link:
+                    #aout.write(f"TextGrid: {tg_link}\n")
+                #aout.write("\n-- Kimenet --\n")
+                aout.write(text_value if text_value else "[Nincs kimenet vagy időtúllépés]\n")
+            print(f"[INFO] Mentve: {out_file}")
+            time.sleep(sleep_t)
 
         context.close()
         browser.close()
-        print("[INFO] Kész:", OUT_TXT)
+        print("[INFO] Kész. Minden fájl az OUTPUT_DIR-be mentve.")
 
 if __name__ == "__main__":
     main()
