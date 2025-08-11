@@ -83,26 +83,21 @@ def click_submit_with_retries(page):
     """Megbízható 'Submit' kattintás több próbával."""
     btn_css = "gradio-app #component-5"
     btn = page.locator(btn_css)
-    # várjuk, míg a gomb megjelenik
     btn.wait_for(state="attached", timeout=10_000)
-    # görgessünk oda
     try:
         btn.scroll_into_view_if_needed(timeout=2_000)
     except Exception:
         pass
     time.sleep(0.3)
 
-    # ha disabled, várjunk kicsit
     for _ in range(10):
         try:
-            dis = btn.get_attribute("disabled")
-            if not dis:
+            if not btn.get_attribute("disabled"):
                 break
         except Exception:
             pass
         time.sleep(0.5)
 
-    # 1. normál katt
     try:
         btn.click()
         print("[DEBUG] Submit: normál click.")
@@ -111,7 +106,6 @@ def click_submit_with_retries(page):
         print("[DEBUG] Submit normál click hiba:", e)
 
     time.sleep(0.5)
-    # 2. force click
     try:
         btn.click(force=True)
         print("[DEBUG] Submit: force click.")
@@ -120,12 +114,8 @@ def click_submit_with_retries(page):
         print("[DEBUG] Submit force click hiba:", e)
 
     time.sleep(0.5)
-    # 3. JS click
     try:
-        page.evaluate("""sel => {
-            const el = document.querySelector(sel);
-            if (el) el.click();
-        }""", btn_css)
+        page.evaluate("""sel => { const el = document.querySelector(sel); if (el) el.click(); }""", btn_css)
         print("[DEBUG] Submit: JS click.")
         return True
     except Exception as e:
@@ -133,10 +123,57 @@ def click_submit_with_retries(page):
 
     return False
 
+def ensure_checkbox_checked(page, label_text: str):
+    """
+    Bepipál egy checkboxot a 'Extra Features' blokkban.
+    Több szelektorral próbálkozik: name/title alapján, majd label szöveg alapján.
+    """
+    container = "gradio-app #component-6"
+
+    # 1) name
+    sel = f"{container} input[type='checkbox'][name='{label_text}']"
+    loc = page.locator(sel)
+    if loc.count():
+        loc.first.wait_for(state="attached", timeout=2000)
+        if not loc.first.is_checked():
+            loc.first.check(force=True)
+        print(f"[DEBUG] Checkbox '{label_text}' (name) bepipálva.")
+        return
+
+    # 2) title
+    sel = f"{container} input[type='checkbox'][title='{label_text}']"
+    loc = page.locator(sel)
+    if loc.count():
+        loc.first.wait_for(state="attached", timeout=2000)
+        if not loc.first.is_checked():
+            loc.first.check(force=True)
+        print(f"[DEBUG] Checkbox '{label_text}' (title) bepipálva.")
+        return
+
+    # 3) label has-text
+    lab = page.locator(f"{container} label", has_text=label_text).first
+    if lab.count():
+        try:
+            # próbáljuk az inputot megtalálni a label alatt
+            inp = lab.locator("input[type='checkbox']").first
+            inp.wait_for(state="attached", timeout=2000)
+            if not inp.is_checked():
+                inp.check(force=True)
+            print(f"[DEBUG] Checkbox '{label_text}' (label) bepipálva.")
+            return
+        except Exception:
+            pass
+        # ha nincs input belül, kattintsunk a labelre
+        lab.click(force=True)
+        print(f"[DEBUG] Checkbox '{label_text}' (label click) bepipálva.")
+        return
+
+    print(f"[WARN] Nem találtam a checkboxot: {label_text!r}")
+
 # --- FŐPROGRAM ----------------------------------------------------------------
 
 def main():
-    sleep_t=0
+    sleep_t = 0  # ha szeretnél "lassítást", állítsd 2-re
 
     files = [p for p in FILES_DIR.glob("*") if p.is_file()]
     if not files:
@@ -178,7 +215,7 @@ def main():
                 time.sleep(sleep_t)
 
                 # 2) File beadása
-                upload_area   = page.locator("gradio-app #component-2 .audio-container button").first
+                upload_area    = page.locator("gradio-app #component-2 .audio-container button").first
                 file_input_sel = "gradio-app #component-2 input[data-testid='file-upload']"
 
                 used_file_chooser = False
@@ -193,7 +230,18 @@ def main():
                     print("[DEBUG] File chooser nem jött fel (", e, ") -> B-terv: közvetlen input")
                 time.sleep(sleep_t)
 
+                if not used_file_chooser:
+                    page.locator(file_input_sel).set_input_files(str(f))
+                    print("[DEBUG] Fájl beadva közvetlen a file inputnak.")
+                time.sleep(sleep_t)
 
+                # 2/c) (opcionális) ellenőrzés – ha kell:
+                # wait_for_file_selected(page, file_input_sel, seconds=8)
+
+                # 2/d) EXTRA FEATURES – pipáljuk be mindkettőt
+                ensure_checkbox_checked(page, "Punctuation and Capitalization")
+                ensure_checkbox_checked(page, "Diarization")
+                time.sleep(sleep_t)
 
                 # 3) Submit – megbízható kattintás több módszerrel
                 ok = click_submit_with_retries(page)
@@ -202,7 +250,6 @@ def main():
                     dump_debug(page, reason="Submit nem kattintható")
                     raise RuntimeError("A 'Submit' gombot nem sikerült megnyomni.")
 
-                # ha nem látszik, hogy futna bármi, még egy próbálkozás
                 try:
                     has_processing = page.locator("gradio-app .progress-text").count() > 0
                     if not has_processing:
