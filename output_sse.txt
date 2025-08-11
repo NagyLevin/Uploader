@@ -1,0 +1,5 @@
+data: {"msg":"estimation","event_id":"129f6dd456fa4828ae370afe3974ba13","rank":0,"queue_size":1,"rank_eta":null}
+
+data: {"msg":"process_starts","event_id":"129f6dd456fa4828ae370afe3974ba13","eta":null}
+
+data: {"msg":"process_completed","event_id":"129f6dd456fa4828ae370afe3974ba13","output":{"error":"function has no backend method."},"success":false}
