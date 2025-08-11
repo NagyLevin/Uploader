@@ -1,152 +1,197 @@
-import requests, time, random, string, mimetypes, json, sys
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
+import pathlib, time, sys
 
-BASE = "https://phon.nytud.hu"
-APP  = "/beast2"
-REFERER = f"{BASE}{APP}/"
-FNAME = "LL5p.m4a"
+# --- KONFIG ---
+BASE_URL  = "https://phon.nytud.hu/beast2/"
+FILES_DIR = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")
+OUT_TXT   = pathlib.Path("kimenet.txt")
+HEADLESS  = False           # Debughoz legyen False; ha stabil, teheted True-ra
+NAV_TIMEOUT = 60_000
+STEP_TIMEOUT = 30_000
+OUTPUT_WAIT_SECS = 180
 
-def rid(n=11): 
-    return ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(n))
+DEBUG_HTML = pathlib.Path("debug_page.html")
+DEBUG_PNG  = pathlib.Path("debug.png")
 
-def guess_mime(p):
-    return mimetypes.guess_type(p)[0] or "application/octet-stream"
+def dump_debug(page, reason=""):
+    try:
+        html = page.content()
+        DEBUG_HTML.write_text(html, encoding="utf-8")
+        page.screenshot(path=str(DEBUG_PNG), full_page=True)
+        print(f"[DEBUG] Mentettem a DOM-ot ({DEBUG_HTML}) és screenshotot ({DEBUG_PNG}). {reason}")
+    except Exception as e:
+        print("[DEBUG] dump_debug hiba:", e)
 
-s = requests.Session()
+def list_all_buttons(page):
+    try:
+        btns = page.locator("button")
+        n = btns.count()
+        print(f"[DEBUG] Összes gomb a lapon: {n}")
+        for i in range(min(n, 80)):  # ne spammeljünk túl
+            b = btns.nth(i)
+            try:
+                label = b.get_attribute("aria-label")
+            except Exception:
+                label = None
+            try:
+                txt = b.inner_text().strip()
+            except Exception:
+                txt = ""
+            print(f"  #{i:02d} aria-label={label!r} text={txt!r}")
+    except Exception as e:
+        print("[DEBUG] list_all_buttons hiba:", e)
 
-session_hash = rid()
-event_id     = rid()      # ideiglenes; a JOIN visszaad egy "valódi" event_id-t
-upload_id    = rid()
-print("session_hash:", session_hash, "event_id:", event_id, "upload_id:", upload_id)
-
-# 1) JOIN (nálad listát kér a 'data' mező)
-join_payload = {"data": [], "session_hash": session_hash, "event_id": event_id, "fn_index": 0}
-jh = {"Origin": BASE, "Referer": REFERER, "Content-Type": "application/json"}
-jr = s.post(f"{BASE}{APP}/queue/join", json=join_payload, headers=jh, timeout=30)
-print("JOIN:", jr.status_code, jr.text[:200])
-jr.raise_for_status()
-
-# Használd a JOIN válaszában kapott event_id-t!
-try:
-    join_event_id = jr.json().get("event_id") or event_id
-except Exception:
-    join_event_id = event_id
-
-# 2) UPLOAD
-mime = guess_mime(FNAME)
-uh = {"Origin": BASE, "Referer": REFERER}
-with open(FNAME, "rb") as f:
-    up = s.post(f"{BASE}{APP}/upload",
-                params={"upload_id": upload_id},
-                files={"files": (FNAME, f, mime)},
-                headers=uh, timeout=180)
-print("UPLOAD(files):", up.status_code, up.text[:200])
-up.raise_for_status()
-
-# tmp path a modell inputjához
-tmp_list = up.json() if up.headers.get("content-type","").startswith("application/json") else []
-if not tmp_list:
-    sys.exit("❌ Nem találtam tmp fájl útvonalat az upload válaszában.")
-tmp_path = tmp_list[0]
-
-# 3) PREDICT / PUSH – több fn_index és payload forma próbálása
-push_url = f"{BASE}{APP}/queue/push"
-ph = {"Origin": BASE, "Referer": REFERER, "Content-Type": "application/json"}
-
-fn_index_found = None
-push_ok = False
-push_resp_text = ""
-
-# két gyakori adatforma: csak az útvonal, vagy {name, data} objektum
-payload_variants = [
-    lambda fn_idx: {"data": [tmp_path], "event_id": join_event_id, "session_hash": session_hash, "fn_index": fn_idx},
-    lambda fn_idx: {"data": [{"name": FNAME, "data": tmp_path}], "event_id": join_event_id, "session_hash": session_hash, "fn_index": fn_idx},
-]
-
-for fn_idx in range(0, 7):  # ha kell, emeld feljebb
-    for build in payload_variants:
-        pp = build(fn_idx)
-        r = s.post(push_url, json=pp, headers=ph, timeout=60)
-        push_resp_text = r.text[:200]
-        print(f"PUSH fn_index={fn_idx} ->", r.status_code, push_resp_text)
-        # siker eset: 200 OK, és nem "function has no backend method." hiba
-        if r.ok and "no backend method" not in r.text:
-            fn_index_found = fn_idx
-            push_ok = True
-            break
-    if push_ok:
-        break
-
-if not push_ok:
-    sys.exit("❌ Nem sikerült elindítani a feldolgozást (push). Nézd meg DevTools→/beast2/queue/push → Request Payload: pontos data-list és fn_index.")
-
-# 3/b) opcionális: progress SSE (done-ig figyelünk)
-prog_headers = {"Accept": "text/event-stream", "Origin": BASE, "Referer": REFERER}
-prog = s.get(f"{BASE}{APP}/upload_progress",
-             params={"upload_id": upload_id},
-             headers=prog_headers, stream=True, timeout=120)
-print("PROGRESS:", prog.status_code)
-if prog.ok:
-    for line in prog.iter_lines(decode_unicode=True):
-        if line and line.startswith("data:"):
-            msg = line[5:].strip()
-            print("progress:", msg)
-            if '"done"' in msg or '"complete": true' in msg:
-                break
-
-# 4) DATA (SSE) – itt jön a kész eredmény
-dh = {"Accept": "text/event-stream", "Origin": BASE, "Referer": REFERER}
-data = s.get(f"{BASE}{APP}/queue/data",
-             params={"session_hash": session_hash},
-             headers=dh, stream=True, timeout=300)
-print("DATA:", data.status_code)
-data.raise_for_status()
-
-# 5) process_completed feldolgozás
-completed = None
-all_lines = []
-for line in data.iter_lines(decode_unicode=True):
-    if line is None:
-        continue
-    all_lines.append(line)
-    if line.startswith("data:"):
-        raw = line[5:].strip()
+def wait_for_nonempty_textarea(page, locator_str, seconds=OUTPUT_WAIT_SECS):
+    loc = page.locator(locator_str)
+    deadline = time.time() + seconds
+    last = ""
+    while time.time() < deadline:
         try:
-            obj = json.loads(raw)
+            loc.wait_for(state="attached", timeout=2000)
+            try:
+                val = (loc.input_value() or "").strip()
+            except Exception:
+                val = (loc.evaluate("el => el.value || ''") or "").strip()
+            if val:
+                print("[DEBUG] Kimenet textarea nem üres, hossza:", len(val))
+                return val
         except Exception:
-            continue
-        if obj.get("msg") == "process_completed":
-            completed = obj
-            break
+            pass
+        time.sleep(1)
+        last = val if 'val' in locals() else last
+    print("[DEBUG] Timeout a kimenet textarea-ra várva.")
+    return last
 
-open("output_sse.txt", "w", encoding="utf-8").write("\n".join(all_lines))
+def main():
+    files = [p for p in FILES_DIR.glob("*") if p.is_file()]
+    if not files:
+        print(f"[HIBA] Nincs fájl a '{FILES_DIR}' mappában.")
+        return
 
-if not completed:
-    print("ℹ️ Nem jött process_completed; nézd meg az output_sse.txt-t.")
-else:
-    out = completed.get("output", {})
-    # mentsük teljesen
-    open("output.json", "w", encoding="utf-8").write(json.dumps(out, ensure_ascii=False, indent=2))
-    print("✅ output.json kész.")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=HEADLESS)
+        context = browser.new_context()
+        page = context.new_page()
+        page.set_default_timeout(STEP_TIMEOUT)
 
-    # próbáljuk kiszedni a leiratot tipikus helyekről
-    transcript = None
-    if isinstance(out, dict) and "data" in out:
-        # gradio általában listát ad vissza "data" kulcsban
-        for item in out["data"]:
-            if isinstance(item, str) and len(item) > 50:
-                transcript = item
-                break
-            if isinstance(item, list):
-                # néha listában van a szöveg
-                for sub in item:
-                    if isinstance(sub, str) and len(sub) > 50:
-                        transcript = sub
+        print("[DEBUG] Navigálás:", BASE_URL)
+        page.goto(BASE_URL, timeout=NAV_TIMEOUT)
+        page.wait_for_load_state("domcontentloaded")
+
+        # Alap debug: listázzuk a gombokat
+        list_all_buttons(page)
+
+        with OUT_TXT.open("w", encoding="utf-8") as out:
+            for f in files:
+                print("\n[INFO] Feltöltés:", f.name)
+
+                # 0) Törlés (ha látható)
+                try:
+                    clear_btn = page.locator("gradio-app #component-4")
+                    clear_btn.click(timeout=1500)
+                    print("[DEBUG] 'Törlés' gomb megnyomva.")
+                except Exception:
+                    print("[DEBUG] 'Törlés' gomb nem kattintható / nincs.")
+
+                # 1) Feltöltés mód kiválasztása: az általad küldött HTML szerint
+                # ez a #component-2 blokkban, a .source-selection span alatt van
+                upload_btn = page.locator('gradio-app #component-2 .source-selection button[aria-label="Upload file"]')
+
+                # ha ez nem található, próbáljuk általánosan
+                if upload_btn.count() == 0:
+                    print("[DEBUG] Célzott Upload szelektor nem talált. Próbálok általánosabbat…")
+                    upload_btn = page.locator('gradio-app button[aria-label="Upload file"]')
+
+                # próbáljunk többször kattintani
+                clicked = False
+                for i in range(8):
+                    try:
+                        upload_btn.first.click(timeout=3000, force=True)
+                        print("[DEBUG] 'Upload file' ikon megnyomva. (próbálkozás:", i+1, ")")
+                        clicked = True
                         break
-            if transcript:
-                break
+                    except Exception as e:
+                        print(f"[DEBUG] Upload click sikertelen (#{i+1}): {e}")
+                        time.sleep(1)
 
-    if transcript:
-        open("transcript.txt", "w", encoding="utf-8").write(transcript)
-        print("📝 transcript.txt mentve.")
-    else:
-        print("ℹ️ Nem találtam szöveges leiratot az outputban – nézd meg az output.json-t a szerkezet miatt.")
+                if not clicked:
+                    dump_debug(page, reason="Upload ikon nem kattintható")
+                    list_all_buttons(page)
+                    raise RuntimeError("Nem találtam/kattintható az 'Upload file' ikon (aria-label='Upload file').")
+
+                # 1.5) input[type=file] megvárása
+                file_input = page.locator("gradio-app input[type='file']")
+                appeared = False
+                for i in range(12):  # ~12s
+                    try:
+                        file_input.wait_for(state="attached", timeout=1000)
+                        appeared = True
+                        print("[DEBUG] input[type=file] megjelent.")
+                        break
+                    except Exception:
+                        # Néha kell még egy kattintás a forrás választóra, ezért rámegyünk még egyszer
+                        try:
+                            upload_btn.first.click(timeout=1000, force=True)
+                        except Exception:
+                            pass
+                        time.sleep(1)
+                if not appeared:
+                    dump_debug(page, reason="input[type=file] nem jelent meg")
+                    raise RuntimeError("Nem jelent meg az <input type='file'> 12s-en belül.")
+
+                # 2) Fájl beadása
+                print("[DEBUG] Fájl beadása:", f)
+                file_input.set_input_files(str(f))
+
+                # 3) „Beküldés” (#component-5)
+                submit_btn = page.locator("gradio-app #component-5")
+                try:
+                    submit_btn.click()
+                    print("[DEBUG] 'Beküldés' gomb kattintva.")
+                except Exception as e:
+                    dump_debug(page, reason="Beküldés katt hiba")
+                    raise RuntimeError("Nem találtam a 'Beküldés' gombot (#component-5).") from e
+
+                # 4) Kimenet textarea (disabled)
+                textarea_sel = "gradio-app #component-10 textarea[data-testid='textbox']"
+                text_value = wait_for_nonempty_textarea(page, textarea_sel, seconds=OUTPUT_WAIT_SECS)
+
+                # 5) TextGrid link (ha van)
+                tg_link = ""
+                try:
+                    a = page.locator("gradio-app #component-9 .file-preview a").first
+                    a.wait_for(state="attached", timeout=2000)
+                    tg_link = a.get_attribute("href") or ""
+                    if tg_link:
+                        print("[DEBUG] TextGrid:", tg_link)
+                except Exception:
+                    print("[DEBUG] Nincs TextGrid link (most).")
+
+                # 6) Eredmény ID
+                res_id = ""
+                try:
+                    id_div = page.locator("gradio-app #component-12 .prose div").nth(1)
+                    id_div.wait_for(state="attached", timeout=2000)
+                    res_id = (id_div.inner_text() or "").strip()
+                    if res_id:
+                        print("[DEBUG] Eredmény ID:", res_id)
+                except Exception:
+                    print("[DEBUG] Nincs Eredmény ID (most).")
+
+                # 7) Mentés TXT-be
+                out.write(f"=== {f.name} ===\n")
+                if res_id:
+                    out.write(f"ID: {res_id}\n")
+                if tg_link:
+                    out.write(f"TextGrid: {tg_link}\n")
+                out.write("\n-- Kimenet --\n")
+                out.write(text_value if text_value else "[Nincs kimenet vagy időtúllépés]\n")
+                out.write("\n\n")
+                out.flush()
+
+        context.close()
+        browser.close()
+        print("[INFO] Kész:", OUT_TXT)
+
+if __name__ == "__main__":
+    main()

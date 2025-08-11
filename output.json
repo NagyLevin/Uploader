@@ -1,8 +1,3 @@
 {
-  "msg": "process_completed",
-  "event_id": "129f6dd456fa4828ae370afe3974ba13",
-  "output": {
-    "error": "function has no backend method."
-  },
-  "success": false
+  "error": "substring not found"
 }
