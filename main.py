@@ -1,10 +1,11 @@
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 import pathlib, time
 import time
+import os
 
 # Conf
 BASE_URL    = "https://phon.nytud.hu/beast2/"
-FILES_DIR   = pathlib.Path("/mnt/d/feldolgozando/MIA-810002") #/mnt/d/feldolgozando/MIA-810002 #/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio
+FILES_DIR   = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio") #/mnt/d/feldolgozando/MIA-810002 #/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio
 OUTPUT_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/leiratok")  # <-- ide mentünk
 #OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 _start_time = None
@@ -19,6 +20,34 @@ DEBUG_HTML = pathlib.Path("debug_page.html")
 DEBUG_PNG  = pathlib.Path("debug.png")
 
 # Fuggvenyek
+
+def check_and_add_visited(text):
+    """
+    Megnézi, hogy a kapott szöveg már szerepel-e a visited.txt fájlban.
+    Ha igen -> True
+    Ha nem -> hozzáadja a fájlhoz és False
+    """
+    filepath = os.path.join(".", "visited.txt")
+
+    # Ha nincs visited.txt, hozzuk létre
+    if not os.path.exists(filepath):
+        with open(filepath, "w", encoding="utf-8") as f:
+            pass  # üresen létrehozzuk
+
+    # Olvassuk be a meglévő tartalmat
+    with open(filepath, "r", encoding="utf-8") as f:
+        visited = {line.strip() for line in f if line.strip()}
+
+    # Ha benne van, True-val térünk vissza
+    if text in visited:
+        return True
+
+    # Ha nincs benne, hozzáadjuk
+    with open(filepath, "a", encoding="utf-8") as f:
+        f.write(text + "\n")
+
+    return False
+
 def timer(action="start"):
     global _start_time
     if action == "start":
@@ -165,8 +194,23 @@ def main():
     sleep_t = 2
 
     allowed_exts = {".mp3", ".m4a"}
-    all_files = [p for p in FILES_DIR.glob("*") if p.is_file()]
-    files = [p for p in all_files if p.suffix.lower() in allowed_exts]
+    all_files = []  # ide fogjuk gyűjteni az összes fájlt
+
+    # A FILES_DIR.glob("*") végigmegy a FILES_DIR mappában található összes elem nevén
+    for p in FILES_DIR.glob("*"):
+        # Megnézzük, hogy az aktuális p valóban fájl-e (nem mappa)
+        if p.is_file():
+            all_files.append(p)  # ha igen, hozzáadjuk a listához
+
+    files = []  # ide jönnek a csak mp3/m4a fájlok
+
+    # Végigmegyünk az összes fájlon
+    for p in all_files:
+        # Megnézzük a kiterjesztést (kisbetűsítve)
+        ext = p.suffix.lower()
+        # Ha a kiterjesztés a megengedett listában van
+        if ext in allowed_exts and check_and_add_visited(p.name) == False:
+            files.append(p)  # hozzáadjuk a listához
 
     if not files:
         print(f"[HIBA] Nincs feldolgozható .mp3/.m4a fájl a '{FILES_DIR}' mappában.")
@@ -174,6 +218,9 @@ def main():
     skipped = [p for p in all_files if p.suffix.lower() not in allowed_exts]
     if skipped:
         print("[INFO] Kihagyott fájlok (nem mp3/m4a):", ", ".join(s.name for s in skipped))
+
+
+
 
     with sync_playwright() as p:
         browser  = p.chromium.launch(headless=HEADLESS)
@@ -208,6 +255,7 @@ def main():
                 print("[DEBUG] Source kiválasztás kihagyva (valszeg már ez az aktív).")
             time.sleep(sleep_t)
 
+
             # 2) File beadása
             upload_area    = page.locator("gradio-app #component-2 .audio-container button").first
             file_input_sel = "gradio-app #component-2 input[data-testid='file-upload']"
@@ -230,7 +278,7 @@ def main():
             tick_checkboxes(page)
             time.sleep(sleep_t)
 
-            #timer("start") #ellenörizzuk mennyi ideig tartott a folyamat
+
 
             # 3) Submit – megbízható kattintás
             ok = click_submit_with_retries(page)
@@ -248,7 +296,7 @@ def main():
                     time.sleep(sleep_t)
             except Exception:
                 pass
-
+            # timer("start") #ellenörizzuk mennyi ideig tartott a folyamat
             # 4) Kimenet
             textarea_sel = "gradio-app #component-10 textarea[data-testid='textbox']"
             text_value = wait_for_nonempty_textarea(page, textarea_sel, seconds=OUTPUT_WAIT_SECS)
