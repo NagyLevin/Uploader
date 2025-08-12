@@ -2,10 +2,12 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 import pathlib, time
 import time
 import os
+from datetime import datetime
+
 
 # Conf
 BASE_URL    = "https://phon.nytud.hu/beast2/"
-FILES_DIR   = pathlib.Path("/mnt/d/feldolgozando/MIA-810002") #/mnt/d/feldolgozando/MIA-810002 #/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio
+FILES_DIR   = pathlib.Path("/mnt/d/feldolgozando/MIA-810002") #/home/datasets/raw-data/podcasts #/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio
 OUTPUT_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/leiratok")  # <-- ide mentünk
 #OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 _start_time = None
@@ -19,6 +21,10 @@ DEBUG_HTML = pathlib.Path("debug_page.html")
 DEBUG_PNG  = pathlib.Path("debug.png")
 
 # Fuggvenyek
+def say_time():
+    most = datetime.now()
+    print("Pontos idő:", most.strftime("%H:%M:%S"))
+
 def add_to_visited(text):
     """
         Megnézi, hogy a kapott szöveg már szerepel-e a visited.txt fájlban.
@@ -316,6 +322,7 @@ def main():
                 pass
 
             timer("start") #ellenörizzuk mennyi ideig tartott a folyamat
+            say_time()
 
             # 4) Kimenet
             textarea_sel = "gradio-app #component-10 textarea[data-testid='textbox']"
@@ -359,7 +366,7 @@ def main():
             print(f"[INFO] Mentve: {out_file}")
             time.sleep(sleep_t)
             timer("stop")  # folyamat vége, kiírja az eltelt időt
-            add_to_visited(p.name)
+            add_to_visited(f.name)
 
         context.close()
         browser.close()
