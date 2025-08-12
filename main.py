@@ -5,7 +5,7 @@ import os
 
 # Conf
 BASE_URL    = "https://phon.nytud.hu/beast2/"
-FILES_DIR   = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio") #/mnt/d/feldolgozando/MIA-810002 #/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio
+FILES_DIR   = pathlib.Path("/mnt/d/feldolgozando/MIA-810002") #/mnt/d/feldolgozando/MIA-810002 #/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio
 OUTPUT_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/leiratok")  # <-- ide mentünk
 #OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 _start_time = None
@@ -19,6 +19,31 @@ DEBUG_HTML = pathlib.Path("debug_page.html")
 DEBUG_PNG  = pathlib.Path("debug.png")
 
 # Fuggvenyek
+def add_to_visited(text):
+    """
+        Megnézi, hogy a kapott szöveg már szerepel-e a visited.txt fájlban.
+        Ha igen -> True
+        Ha nem -> hozzáadja a fájlhoz és False
+        """
+    filepath = os.path.join(".", "visited.txt")
+
+    # Ha nincs visited.txt, hozzuk létre
+    if not os.path.exists(filepath):
+        with open(filepath, "w", encoding="utf-8") as f:
+            pass  # üresen létrehozzuk
+
+    # Olvassuk be a meglévő tartalmat
+    with open(filepath, "r", encoding="utf-8") as f:
+        visited = {line.strip() for line in f if line.strip()}
+
+    # Ha benne van, True-val térünk vissza
+    if text in visited:
+        return True
+
+    # Ha nincs benne, hozzáadjuk
+    with open(filepath, "a", encoding="utf-8") as f:
+        f.write(text + "\n")
+
 
 def check_and_add_visited(text):
     """
@@ -41,9 +66,6 @@ def check_and_add_visited(text):
     if text in visited:
         return True
 
-    # Ha nincs benne, hozzáadjuk
-    with open(filepath, "a", encoding="utf-8") as f:
-        f.write(text + "\n")
 
     return False
 
@@ -337,6 +359,7 @@ def main():
             print(f"[INFO] Mentve: {out_file}")
             time.sleep(sleep_t)
             timer("stop")  # folyamat vége, kiírja az eltelt időt
+            add_to_visited(p.name)
 
         context.close()
         browser.close()
