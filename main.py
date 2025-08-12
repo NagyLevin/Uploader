@@ -14,7 +14,6 @@ sleep_t = 2
 HEADLESS    = False          # debughoz False; ha stabil, mehet True megmutaja a weboldalt, és az automatizállt folyamatot
 NAV_TIMEOUT = 60_000
 STEP_TIMEOUT = 30_000
-OUTPUT_WAIT_SECS = 180
 
 DEBUG_HTML = pathlib.Path("debug_page.html")
 DEBUG_PNG  = pathlib.Path("debug.png")
@@ -62,6 +61,7 @@ def timer(action="start"):
             _start_time = None
     else:
         print("Ismeretlen parancs. Használat: timer('start') vagy timer('stop')")
+
 def dump_debug(page, reason=""):
     try:
         DEBUG_HTML.write_text(page.content(), encoding="utf-8")
@@ -104,11 +104,13 @@ def wait_for_file_selected(page, input_sel, seconds=10):
         time.sleep(sleep_t)
     return False
 
-def wait_for_nonempty_textarea(page, locator_str, seconds=OUTPUT_WAIT_SECS):
+def wait_for_nonempty_textarea(page, locator_str):
+    """
+    VÉGTELEN várakozás a nem üres textarea-ig. Nincs timeout.
+    Csak akkor tér vissza, ha biztosan van kimenet.
+    """
     loc = page.locator(locator_str)
-    deadline = time.time() + seconds
-    last = ""
-    while time.time() < deadline:
+    while True:
         try:
             loc.wait_for(state="attached", timeout=1000)
             try:
@@ -121,9 +123,6 @@ def wait_for_nonempty_textarea(page, locator_str, seconds=OUTPUT_WAIT_SECS):
         except Exception:
             pass
         time.sleep(sleep_t)
-        last = val if 'val' in locals() else last
-    print("[DEBUG] Timeout a kimenet textarea-ra várva.")
-    return last
 
 def click_submit_with_retries(page):
     """Megbízható 'Submit' kattintás több próbával."""
@@ -219,9 +218,6 @@ def main():
     if skipped:
         print("[INFO] Kihagyott fájlok (nem mp3/m4a):", ", ".join(s.name for s in skipped))
 
-
-
-
     with sync_playwright() as p:
         browser  = p.chromium.launch(headless=HEADLESS)
         context  = browser.new_context()
@@ -239,12 +235,17 @@ def main():
         for f in files:
             print("\n[INFO] Feltöltés:", f.name)
 
-            # 0) Clear (ha van)
+            # 0) Refresh (Clear helyett)
             try:
-                page.locator("gradio-app #component-4").click(timeout=1500)
-                print("[DEBUG] 'Clear' megnyomva.")
-            except Exception:
-                print("[DEBUG] 'Clear' nem kattintható / nincs.")
+                page.reload(wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+                print("[DEBUG] Oldal frissítve (reload).")
+            except PWTimeoutError:
+                print("[WARN] Reload timeout – goto fallback")
+                page.goto(BASE_URL, timeout=NAV_TIMEOUT, wait_until="domcontentloaded")
+            except Exception as e:
+                print("[WARN] Reload hiba:", e, "– megpróbáljuk goto-val")
+                page.goto(BASE_URL, timeout=NAV_TIMEOUT, wait_until="domcontentloaded")
+
             time.sleep(sleep_t)
 
             # 1) forrás: Upload file (biztos ami biztos)
@@ -254,7 +255,6 @@ def main():
             except Exception:
                 print("[DEBUG] Source kiválasztás kihagyva (valszeg már ez az aktív).")
             time.sleep(sleep_t)
-
 
             # 2) File beadása
             upload_area    = page.locator("gradio-app #component-2 .audio-container button").first
@@ -272,13 +272,9 @@ def main():
                 print("[DEBUG] File chooser nem jött fel (", e, ") -> B-terv: közvetlen input")
             time.sleep(sleep_t)
 
-
-
             # 2/D) Pipa az extrákra (feltöltés után, submit előtt!)
             tick_checkboxes(page)
             time.sleep(sleep_t)
-
-
 
             # 3) Submit – megbízható kattintás
             ok = click_submit_with_retries(page)
@@ -296,10 +292,12 @@ def main():
                     time.sleep(sleep_t)
             except Exception:
                 pass
+
             timer("start") #ellenörizzuk mennyi ideig tartott a folyamat
+
             # 4) Kimenet
             textarea_sel = "gradio-app #component-10 textarea[data-testid='textbox']"
-            text_value = wait_for_nonempty_textarea(page, textarea_sel, seconds=OUTPUT_WAIT_SECS)
+            text_value = wait_for_nonempty_textarea(page, textarea_sel)
             time.sleep(sleep_t)
 
             # 5) TextGrid link
