@@ -191,7 +191,7 @@ def tick_checkboxes(page):
 # main
 def main():
     # minden lépés után ennyit vár; gyorsításhoz állítsd 0-ra
-    sleep_t = 2
+    sleep_t = 1
 
     allowed_exts = {".mp3", ".m4a"}
     all_files = []  # ide fogjuk gyűjteni az összes fájlt
@@ -296,7 +296,7 @@ def main():
                     time.sleep(sleep_t)
             except Exception:
                 pass
-            # timer("start") #ellenörizzuk mennyi ideig tartott a folyamat
+            timer("start") #ellenörizzuk mennyi ideig tartott a folyamat
             # 4) Kimenet
             textarea_sel = "gradio-app #component-10 textarea[data-testid='textbox']"
             text_value = wait_for_nonempty_textarea(page, textarea_sel, seconds=OUTPUT_WAIT_SECS)
