@@ -335,6 +335,7 @@ def main():
                     #aout.write(f"TextGrid: {tg_link}\n")
                 #aout.write("\n-- Kimenet --\n")
                 aout.write(text_value if text_value else "[Nincs kimenet vagy időtúllépés]\n")
+                text_value = ""
             print(f"[INFO] Mentve: {out_file}")
             time.sleep(sleep_t)
             timer("stop")  # folyamat vége, kiírja az eltelt időt
