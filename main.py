@@ -6,7 +6,7 @@ from datetime import datetime
 
 # ---- Config (ASCII-safe) ----
 BASE_URL   = "https://phon.nytud.hu/beast2/"
-FILES_DIR  = pathlib.Path("/home/szabol/podtest")
+FILES_DIR  = pathlib.Path("/home/datasets/raw-data/podcasts")
 OUTPUT_DIR = pathlib.Path("/home/szabol/leiratok")
 
 # Global sleep between UI steps
@@ -217,7 +217,7 @@ def main():
     allowed_exts = {".mp3", ".m4a"}
     all_files = []
 
-    for p in FILES_DIR.glob("*"):
+    for p in FILES_DIR.rglob("*"):  # recursive search
         if p.is_file():
             all_files.append(p)
 
