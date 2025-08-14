@@ -6,7 +6,7 @@ from datetime import datetime
 
 # ---- Config (ASCII-safe) ----
 BASE_URL   = "https://phon.nytud.hu/beast2/"
-FILES_DIR  = pathlib.Path("/home/szabol/podtest") #/home/datasets/raw-data/podcasts
+FILES_DIR  = pathlib.Path("/home/datasets/raw-data/podcasts")
 OUTPUT_DIR = pathlib.Path("/home/szabol/leiratok")
 
 # Global sleep between UI steps
@@ -260,7 +260,7 @@ def main():
         print("[DEBUG] Navigating:", BASE_URL)
         page.goto(BASE_URL, timeout=NAV_TIMEOUT)
         page.wait_for_load_state("domcontentloaded")
-        time.sleep(4)
+        time.sleep(sleep_t)
 
         list_all_buttons(page)
         time.sleep(sleep_t)
@@ -280,7 +280,7 @@ def main():
                 print("[WARN] Reload error:", e, " trying goto")
                 page.goto(BASE_URL, timeout=NAV_TIMEOUT, wait_until="domcontentloaded")
 
-            time.sleep(sleep_t)
+            time.sleep(4)
 
             # 1) Source: Upload file (just in case)
             try:
