@@ -6,7 +6,7 @@ from datetime import datetime
 
 # ---- Config (ASCII-safe) ----
 BASE_URL   = "https://phon.nytud.hu/beast2/"
-FILES_DIR  = pathlib.Path("/home/datasets/raw-data/podcasts")
+FILES_DIR  = pathlib.Path("/home/szabol/podtest") #/home/datasets/raw-data/podcasts
 OUTPUT_DIR = pathlib.Path("/home/szabol/leiratok")
 
 # Global sleep between UI steps
@@ -260,12 +260,13 @@ def main():
         print("[DEBUG] Navigating:", BASE_URL)
         page.goto(BASE_URL, timeout=NAV_TIMEOUT)
         page.wait_for_load_state("domcontentloaded")
-        time.sleep(sleep_t)
+        time.sleep(4)
 
         list_all_buttons(page)
         time.sleep(sleep_t)
 
         for f in files:
+
             print("\n[INFO] Uploading:", f.name)
 
             # 0) Refresh
@@ -325,9 +326,10 @@ def main():
             try:
                 has_processing = page.locator("gradio-app .progress-text").count() > 0
                 if not has_processing:
-                    print("[DEBUG] No 'processing' visible -> clicking submit again.")
+                    print("[DEBUG] No 'processing' visible -> uploading again")
                     click_submit_with_retries(page)
                     time.sleep(sleep_t)
+
             except Exception:
                 pass
 
@@ -363,15 +365,17 @@ def main():
                 print("[DEBUG] No Result ID.")
             time.sleep(sleep_t)
 
-            # 7) Save result
+            # 7) Save result (mirror input folder structure under OUTPUT_DIR)
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            out_file = OUTPUT_DIR / f"{f.stem}.txt"
-            with out_file.open("w", encoding="utf-8") as aout:
+            rel_path = f.relative_to(FILES_DIR)          # keep subfolders
+            out_path = (OUTPUT_DIR / rel_path).with_suffix(".txt")  # change ext to .txt
+            out_path.parent.mkdir(parents=True, exist_ok=True)      # ensure subdirs exist
+            with out_path.open("w", encoding="utf-8") as aout:
                 if res_id:
                     aout.write(f"ID: {res_id}\n")
                 aout.write(text_value if text_value else "[No output or timeout]\n")
                 text_value = ""
-            print(f"[INFO] Saved: {out_file}")
+            print(f"[INFO] Saved: {out_path}")
             time.sleep(sleep_t)
             timer("stop")
             add_to_visited(f.name)
@@ -382,3 +386,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
