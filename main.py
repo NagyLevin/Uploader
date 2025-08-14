@@ -6,8 +6,8 @@ from datetime import datetime
 
 # ---- Config (ASCII-safe) ----
 BASE_URL   = "https://phon.nytud.hu/beast2/"
-FILES_DIR  = pathlib.Path("/home/datasets/raw-data/podcasts")
-OUTPUT_DIR = pathlib.Path("/home/szabol/leiratok")
+FILES_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")
+OUTPUT_DIR = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/javtest")
 
 # Global sleep between UI steps
 sleep_t = 2
@@ -209,6 +209,100 @@ def tick_checkboxes(page):
         except Exception as e:
             print(f"[WARN] Could not check: {name} -> {e}")
 
+
+def redo_upload_and_submit(page, f):
+    """
+    Re-run the 'refresh + upload + submit' sequence once.
+    Returns True if we managed to click Submit and see 'processing' start,
+    otherwise False.
+    """
+    try:
+        # 0) Refresh
+        try:
+            page.reload(wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+            print("[DEBUG] Page reloaded.")
+        except PWTimeoutError:
+            print("[WARN] Reload timeout using goto fallback")
+            page.goto(BASE_URL, timeout=NAV_TIMEOUT, wait_until="domcontentloaded")
+        except Exception as e:
+            print("[WARN] Reload error:", e, " trying goto")
+            page.goto(BASE_URL, timeout=NAV_TIMEOUT, wait_until="domcontentloaded")
+
+        time.sleep(4)
+
+        # 1) Source: Upload file (just in case)
+        try:
+            page.locator(
+                'gradio-app #component-2 .source-selection button[aria-label="Upload file"]'
+            ).first.click(timeout=1500, force=True)
+            print("[DEBUG] Source set to 'Upload file'.")
+        except Exception:
+            print("[DEBUG] Source selection skipped (probably already active).")
+        time.sleep(sleep_t)
+
+        # 2) File input
+        upload_area    = page.locator("gradio-app #component-2 .audio-container button").first
+        file_input_sel = "gradio-app #component-2 input[data-testid='file-upload']"
+
+        try:
+            with page.expect_file_chooser(timeout=5000) as fc_info:
+                upload_area.click()
+            chooser = fc_info.value
+            chooser.set_files(str(f))
+            print("[DEBUG] File sent via file chooser.")
+        except Exception as e:
+            print("[DEBUG] File chooser not shown (", e, ") -> direct input attempt")
+            try:
+                page.set_input_files(file_input_sel, str(f))
+                print("[DEBUG] File sent via set_input_files.")
+            except Exception as e2:
+                print("[ERROR] Could not provide file:", e2)
+                dump_debug(page, reason="file upload failed (redo)")
+                return False
+
+        time.sleep(sleep_t)
+
+        # 2/D) Extra checkboxes before submit
+        tick_checkboxes(page)
+        time.sleep(sleep_t)
+
+        # 3) Submit
+        ok2 = click_submit_with_retries(page)
+        time.sleep(sleep_t)
+        if not ok2:
+            dump_debug(page, reason="Submit not clickable (redo)")
+            print("[ERROR] Submit still not clickable on redo.")
+            return False
+
+        # 3/B) Confirm 'processing' appears; try one more click if needed
+        try:
+            has_processing = page.locator("gradio-app .progress-text").count() > 0
+            if not has_processing:
+                print("[DEBUG] No 'processing' visible after redo -> clicking submit again")
+                click_submit_with_retries(page)
+                time.sleep(sleep_t)
+                has_processing = page.locator("gradio-app .progress-text").count() > 0
+            if not has_processing:
+                print("[ERROR] Still no 'processing' after redo.")
+                dump_debug(page, reason="no processing after redo")
+                return False
+        except Exception as e:
+            print("[WARN] Processing check failed on redo:", e)
+            # Be conservative: treat as failure
+            return False
+
+        # If we got here, redo worked
+        return True
+
+    except Exception as e:
+        print("[ERROR] redo_upload_and_submit crashed:", e)
+        dump_debug(page, reason="redo_upload_and_submit exception")
+        return False
+
+
+
+
+
 # ---- Main ----
 def main():
     global sleep_t
@@ -320,18 +414,12 @@ def main():
             ok = click_submit_with_retries(page)
             time.sleep(sleep_t)
             if not ok:
-                dump_debug(page, reason="Submit not clickable")
-                raise RuntimeError("Could not click 'Submit' button.")
+                # Try one full redo
+                print("[INFO] Trying a one-time redo of upload+submit...")
+                if not redo_upload_and_submit(page, f):
+                    # Second failure -> stop program with clear error
+                    raise RuntimeError("Could not upload file (submit not clickable even after redo).")
 
-            try:
-                has_processing = page.locator("gradio-app .progress-text").count() > 0
-                if not has_processing:
-                    print("[DEBUG] No 'processing' visible -> uploading again")
-                    click_submit_with_retries(page)
-                    time.sleep(sleep_t)
-
-            except Exception:
-                pass
 
             timer("start")
             say_time()
