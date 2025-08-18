@@ -1,0 +1,797 @@
+{
+  "version": "4.44.1",
+  "mode": "blocks",
+  "app_id": 4714814721568934700,
+  "dev_mode": false,
+  "analytics_enabled": true,
+  "components": [
+    {
+      "id": 1,
+      "type": "html",
+      "props": {
+        "show_label": false,
+        "visible": true,
+        "elem_classes": [],
+        "name": "html",
+        "_selectable": false
+      },
+      "skip_api": false,
+      "component_class_id": "d947b7a75edb33c1de0293ee2d820135",
+      "key": null,
+      "api_info": {
+        "type": "string"
+      },
+      "example_inputs": "<p>Hello</p>"
+    },
+    {
+      "id": 2,
+      "type": "audio",
+      "props": {
+        "streamable": false,
+        "sources": [
+          "upload",
+          "microphone"
+        ],
+        "type": "filepath",
+        "show_label": true,
+        "container": true,
+        "min_width": 160,
+        "visible": true,
+        "streaming": false,
+        "elem_classes": [],
+        "format": "wav",
+        "autoplay": false,
+        "show_share_button": false,
+        "editable": true,
+        "waveform_options": {
+          "waveform_color": null,
+          "waveform_progress_color": null,
+          "trim_region_color": null,
+          "show_recording_waveform": true,
+          "show_controls": false,
+          "skip_length": 5,
+          "sample_rate": 44100
+        },
+        "loop": false,
+        "name": "audio",
+        "_selectable": false
+      },
+      "skip_api": false,
+      "component_class_id": "e5f0e74a7ab6c6a160495d13a3fd0abf",
+      "key": null,
+      "api_info": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Size"
+          },
+          "orig_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Orig Name"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mime Type"
+          },
+          "is_stream": {
+            "default": false,
+            "title": "Is Stream",
+            "type": "boolean"
+          },
+          "meta": {
+            "default": {
+              "_type": "gradio.FileData"
+            },
+            "title": "Meta",
+            "type": "object"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "FileData",
+        "type": "object"
+      },
+      "example_inputs": {
+        "path": "https://github.com/gradio-app/gradio/raw/main/test/test_files/audio_sample.wav",
+        "meta": {
+          "_type": "gradio.FileData"
+        },
+        "orig_name": "audio_sample.wav",
+        "url": "https://github.com/gradio-app/gradio/raw/main/test/test_files/audio_sample.wav"
+      }
+    },
+    {
+      "id": 3,
+      "type": "row",
+      "props": {
+        "variant": "default",
+        "visible": true,
+        "elem_classes": [
+          "input_btn_row"
+        ],
+        "equal_height": true,
+        "show_progress": false,
+        "name": "row"
+      },
+      "skip_api": true,
+      "component_class_id": "0c2659dfe57d7280a9059ba63e95dbeb",
+      "key": null
+    },
+    {
+      "id": 4,
+      "type": "button",
+      "props": {
+        "value": "Clear",
+        "variant": "secondary",
+        "visible": true,
+        "interactive": true,
+        "elem_classes": [
+          "custom_btn"
+        ],
+        "show_api": false,
+        "name": "button",
+        "_selectable": false
+      },
+      "skip_api": true,
+      "component_class_id": "ad0c0364f2f441c2a9b31d4ba28c15d7",
+      "key": null
+    },
+    {
+      "id": 5,
+      "type": "button",
+      "props": {
+        "value": "Run",
+        "variant": "secondary",
+        "visible": true,
+        "interactive": true,
+        "elem_classes": [
+          "custom_btn"
+        ],
+        "name": "button",
+        "_selectable": false
+      },
+      "skip_api": true,
+      "component_class_id": "ae6c3a6cce08cd5faa77784e19c70801",
+      "key": null
+    },
+    {
+      "id": 6,
+      "type": "checkboxgroup",
+      "props": {
+        "choices": [],
+        "value": [],
+        "type": "value",
+        "show_label": true,
+        "container": true,
+        "min_width": 160,
+        "visible": true,
+        "elem_classes": [],
+        "name": "checkboxgroup",
+        "_selectable": false
+      },
+      "skip_api": false,
+      "component_class_id": "940f218253fe1a60f82f3cdb294bc565",
+      "key": null,
+      "api_info": {
+        "items": {
+          "enum": [],
+          "type": "string"
+        },
+        "title": "Checkbox Group",
+        "type": "array"
+      },
+      "example_inputs": null
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "props": {
+        "variant": "default",
+        "visible": true,
+        "equal_height": true,
+        "show_progress": false,
+        "name": "row"
+      },
+      "skip_api": true,
+      "component_class_id": "0c2659dfe57d7280a9059ba63e95dbeb",
+      "key": null
+    },
+    {
+      "id": 8,
+      "type": "html",
+      "props": {
+        "show_label": false,
+        "visible": true,
+        "elem_classes": [],
+        "name": "html",
+        "_selectable": false
+      },
+      "skip_api": false,
+      "component_class_id": "d947b7a75edb33c1de0293ee2d820135",
+      "key": null,
+      "api_info": {
+        "type": "string"
+      },
+      "example_inputs": "<p>Hello</p>"
+    },
+    {
+      "id": 9,
+      "type": "file",
+      "props": {
+        "file_count": "single",
+        "type": "filepath",
+        "label": "Download TextGrid",
+        "show_label": true,
+        "container": true,
+        "min_width": 160,
+        "visible": false,
+        "elem_classes": [],
+        "name": "file",
+        "_selectable": false
+      },
+      "skip_api": false,
+      "component_class_id": "1d4ef829d955b80df92e25752cde65b0",
+      "key": null,
+      "api_info": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Size"
+          },
+          "orig_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Orig Name"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Mime Type"
+          },
+          "is_stream": {
+            "default": false,
+            "title": "Is Stream",
+            "type": "boolean"
+          },
+          "meta": {
+            "default": {
+              "_type": "gradio.FileData"
+            },
+            "title": "Meta",
+            "type": "object"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "FileData",
+        "type": "object"
+      },
+      "example_inputs": {
+        "path": "https://github.com/gradio-app/gradio/raw/main/test/test_files/sample_file.pdf",
+        "meta": {
+          "_type": "gradio.FileData"
+        },
+        "orig_name": "sample_file.pdf",
+        "url": "https://github.com/gradio-app/gradio/raw/main/test/test_files/sample_file.pdf"
+      }
+    },
+    {
+      "id": 10,
+      "type": "textbox",
+      "props": {
+        "lines": 1,
+        "max_lines": 20,
+        "show_label": true,
+        "container": true,
+        "min_width": 160,
+        "visible": true,
+        "autofocus": false,
+        "autoscroll": true,
+        "elem_classes": [],
+        "type": "text",
+        "rtl": false,
+        "show_copy_button": true,
+        "name": "textbox",
+        "_selectable": false
+      },
+      "skip_api": false,
+      "component_class_id": "f9fcda8fc1e05f714373f2eec75710ed",
+      "key": null,
+      "api_info": {
+        "type": "string"
+      },
+      "example_inputs": "Hello!!"
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "props": {
+        "variant": "default",
+        "visible": true,
+        "elem_classes": [
+          "output_btn_row"
+        ],
+        "equal_height": true,
+        "show_progress": false,
+        "name": "row"
+      },
+      "skip_api": true,
+      "component_class_id": "0c2659dfe57d7280a9059ba63e95dbeb",
+      "key": null
+    },
+    {
+      "id": 12,
+      "type": "html",
+      "props": {
+        "show_label": false,
+        "visible": true,
+        "elem_classes": [],
+        "name": "html",
+        "_selectable": false
+      },
+      "skip_api": false,
+      "component_class_id": "d947b7a75edb33c1de0293ee2d820135",
+      "key": null,
+      "api_info": {
+        "type": "string"
+      },
+      "example_inputs": "<p>Hello</p>"
+    },
+    {
+      "id": 13,
+      "type": "button",
+      "props": {
+        "value": "Run",
+        "variant": "secondary",
+        "icon": {
+          "path": "https://www.pngall.com/wp-content/uploads/5/Like-Button-Transparent.png",
+          "url": "https://www.pngall.com/wp-content/uploads/5/Like-Button-Transparent.png",
+          "size": null,
+          "orig_name": null,
+          "mime_type": null,
+          "is_stream": false,
+          "meta": {
+            "_type": "gradio.FileData"
+          }
+        },
+        "visible": true,
+        "interactive": true,
+        "elem_classes": [
+          "like_btn"
+        ],
+        "name": "button",
+        "_selectable": false
+      },
+      "skip_api": true,
+      "component_class_id": "ae6c3a6cce08cd5faa77784e19c70801",
+      "key": null
+    },
+    {
+      "id": 14,
+      "type": "button",
+      "props": {
+        "value": "Run",
+        "variant": "secondary",
+        "icon": {
+          "path": "https://pngimg.com/d/dislike_PNG68.png",
+          "url": "https://pngimg.com/d/dislike_PNG68.png",
+          "size": null,
+          "orig_name": null,
+          "mime_type": null,
+          "is_stream": false,
+          "meta": {
+            "_type": "gradio.FileData"
+          }
+        },
+        "visible": true,
+        "interactive": true,
+        "elem_classes": [
+          "dislike_btn"
+        ],
+        "name": "button",
+        "_selectable": false
+      },
+      "skip_api": true,
+      "component_class_id": "ae6c3a6cce08cd5faa77784e19c70801",
+      "key": null
+    },
+    {
+      "id": 15,
+      "type": "html",
+      "props": {
+        "show_label": false,
+        "visible": true,
+        "elem_classes": [],
+        "name": "html",
+        "_selectable": false
+      },
+      "skip_api": false,
+      "component_class_id": "d947b7a75edb33c1de0293ee2d820135",
+      "key": null,
+      "api_info": {
+        "type": "string"
+      },
+      "example_inputs": "<p>Hello</p>"
+    },
+    {
+      "id": 16,
+      "type": "form",
+      "props": {
+        "scale": 0,
+        "min_width": 0,
+        "name": "form"
+      },
+      "skip_api": true,
+      "component_class_id": "a081f0ae34c12bc59b26a4196c574437",
+      "key": null
+    },
+    {
+      "id": 17,
+      "type": "form",
+      "props": {
+        "scale": 0,
+        "min_width": 0,
+        "name": "form"
+      },
+      "skip_api": true,
+      "component_class_id": "a081f0ae34c12bc59b26a4196c574437",
+      "key": null
+    }
+  ],
+  "css": "\n\n.gradio-container {\n  max-width: 800px !important;\n}\n\n.custom_btn {\n  max-width: 300px;\n}\n\n.input_btn_row {\n  justify-content: space-between;\n  padding-bottom: 20px;\n}\n\n.output_btn_row {\n  justify-content: flex-end;\n}\n\n.like_btn {\n  max-width: 100px;\n}\n\n.dislike_btn {\n  max-width: 100px;\n}\n\nfooter {\n  display:none !important;\n}\n\n",
+  "connect_heartbeat": false,
+  "js": null,
+  "head": null,
+  "title": "Beast 2",
+  "space_id": null,
+  "enable_queue": true,
+  "show_error": true,
+  "show_api": true,
+  "is_colab": false,
+  "max_file_size": null,
+  "stylesheets": [
+    "https://fonts.googleapis.com/css2?family=Source+Sans+Pro:wght@400;600&display=swap",
+    "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap"
+  ],
+  "theme": "default",
+  "protocol": "sse_v3",
+  "body_css": {
+    "body_background_fill": "white",
+    "body_text_color": "#1f2937",
+    "body_background_fill_dark": "#0b0f19",
+    "body_text_color_dark": "#f3f4f6"
+  },
+  "fill_height": false,
+  "fill_width": false,
+  "theme_hash": "aa3cf5a76ff4ff3d05b407358c4a85aa7a55a3f5751b53d49cba0b8d49a6c148",
+  "layout": {
+    "id": 0,
+    "children": [
+      {
+        "id": 1
+      },
+      {
+        "id": 2
+      },
+      {
+        "id": 3,
+        "children": [
+          {
+            "id": 4
+          },
+          {
+            "id": 5
+          }
+        ]
+      },
+      {
+        "id": 16,
+        "children": [
+          {
+            "id": 6
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "children": [
+          {
+            "id": 8
+          },
+          {
+            "id": 9
+          }
+        ]
+      },
+      {
+        "id": 17,
+        "children": [
+          {
+            "id": 10
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "children": [
+          {
+            "id": 12
+          },
+          {
+            "id": 13
+          },
+          {
+            "id": 14
+          }
+        ]
+      },
+      {
+        "id": 15
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "id": 0,
+      "targets": [
+        [
+          4,
+          "click"
+        ]
+      ],
+      "inputs": [],
+      "outputs": [
+        2
+      ],
+      "backend_fn": false,
+      "js": "() => [null]",
+      "queue": false,
+      "api_name": "js_fn",
+      "scroll_to_output": false,
+      "show_progress": "full",
+      "batch": false,
+      "max_batch_size": 4,
+      "cancels": [],
+      "types": {
+        "generator": false,
+        "cancel": false
+      },
+      "collects_event_data": false,
+      "trigger_after": null,
+      "trigger_only_on_success": false,
+      "trigger_mode": "once",
+      "show_api": false,
+      "zerogpu": false,
+      "rendered_in": null
+    },
+    {
+      "id": 1,
+      "targets": [
+        [
+          13,
+          "click"
+        ]
+      ],
+      "inputs": [
+        12
+      ],
+      "outputs": [],
+      "backend_fn": true,
+      "js": null,
+      "queue": true,
+      "api_name": "partial",
+      "scroll_to_output": false,
+      "show_progress": "full",
+      "batch": false,
+      "max_batch_size": 4,
+      "cancels": [],
+      "types": {
+        "generator": false,
+        "cancel": false
+      },
+      "collects_event_data": false,
+      "trigger_after": null,
+      "trigger_only_on_success": false,
+      "trigger_mode": "once",
+      "show_api": true,
+      "zerogpu": false,
+      "rendered_in": null
+    },
+    {
+      "id": 2,
+      "targets": [
+        [
+          14,
+          "click"
+        ]
+      ],
+      "inputs": [
+        12
+      ],
+      "outputs": [],
+      "backend_fn": true,
+      "js": null,
+      "queue": true,
+      "api_name": "partial_1",
+      "scroll_to_output": false,
+      "show_progress": "full",
+      "batch": false,
+      "max_batch_size": 4,
+      "cancels": [],
+      "types": {
+        "generator": false,
+        "cancel": false
+      },
+      "collects_event_data": false,
+      "trigger_after": null,
+      "trigger_only_on_success": false,
+      "trigger_mode": "once",
+      "show_api": true,
+      "zerogpu": false,
+      "rendered_in": null
+    },
+    {
+      "id": 3,
+      "targets": [
+        [
+          5,
+          "click"
+        ]
+      ],
+      "inputs": [
+        2,
+        6
+      ],
+      "outputs": [
+        10,
+        12,
+        9
+      ],
+      "backend_fn": true,
+      "js": null,
+      "queue": true,
+      "api_name": "partial_2",
+      "scroll_to_output": false,
+      "show_progress": "full",
+      "batch": false,
+      "max_batch_size": 4,
+      "cancels": [],
+      "types": {
+        "generator": false,
+        "cancel": false
+      },
+      "collects_event_data": false,
+      "trigger_after": null,
+      "trigger_only_on_success": false,
+      "trigger_mode": "once",
+      "show_api": true,
+      "zerogpu": false,
+      "rendered_in": null
+    },
+    {
+      "id": 4,
+      "targets": [
+        [
+          0,
+          "load"
+        ]
+      ],
+      "inputs": [],
+      "outputs": [
+        1,
+        2,
+        4,
+        5,
+        6,
+        8,
+        10,
+        12,
+        13,
+        14,
+        15
+      ],
+      "backend_fn": true,
+      "js": null,
+      "queue": true,
+      "api_name": "is_hungarian",
+      "scroll_to_output": false,
+      "show_progress": "full",
+      "batch": false,
+      "max_batch_size": 4,
+      "cancels": [],
+      "types": {
+        "generator": false,
+        "cancel": false
+      },
+      "collects_event_data": false,
+      "trigger_after": null,
+      "trigger_only_on_success": false,
+      "trigger_mode": "once",
+      "show_api": true,
+      "zerogpu": false,
+      "rendered_in": null
+    }
+  ],
+  "root": "https://phon.nytud.hu/beast2",
+  "username": null
+}
