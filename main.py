@@ -8,6 +8,8 @@ from datetime import datetime
 BASE_URL   = "https://phon.nytud.hu/beast2/"
 FILES_DIR  = pathlib.Path("/home/datasets/raw-data/podcasts")
 OUTPUT_DIR = pathlib.Path("/home/szabol/leiratok")
+#FILES_DIR  = pathlib.Path("/home/datasets/raw-data/podcasts")
+#OUTPUT_DIR = pathlib.Path("/home/szabol/leiratok")
 
 # Global sleep between UI steps
 sleep_t = 2
@@ -210,11 +212,47 @@ def tick_checkboxes(page):
                 print(f"[DEBUG] Checkbox already checked: {name}")
         except Exception as e:
             print(f"[WARN] Could not check: {name} -> {e}")
+MAX_PROCESS_WAIT = 1000  # seconds
 
+def wait_for_output_with_timeout(page, locator_str, timeout_sec):
+    """
+    Wait until the output textarea has non-empty value, but only up to timeout_sec.
+    Returns the value on success, raises TimeoutError on timeout.
+    """
+    loc = page.locator(locator_str)
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        try:
+            loc.wait_for(state="attached", timeout=1000)
+            try:
+                val = (loc.input_value() or "").strip()
+            except Exception:
+                val = (loc.evaluate("el => el.value || ''") or "").strip()
+            if val:
+                print("[DEBUG] Output textarea non-empty, length:", len(val))
+                return val
+        except Exception:
+            pass
+
+        # Optional: if server shows an explicit error, abort early
+        try:
+            if page.locator("gradio-app .error, gradio-app .warning").count() > 0:
+                raise RuntimeError("Server-side error while processing.")
+        except Exception:
+            pass
+
+        time.sleep(1)
+
+    raise TimeoutError(f"Timed out after {timeout_sec}s waiting for output.")
+
+def safe_reload(page):
+    try:
+        page.reload(wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+    except Exception:
+        page.goto(BASE_URL, timeout=NAV_TIMEOUT, wait_until="domcontentloaded")
 # ---- Main ----
 def main():
     global sleep_t
-    sleep_t = 0  # faster steps
 
     allowed_exts = {".mp3", ".m4a"}
     all_files = []
@@ -325,28 +363,51 @@ def main():
             time.sleep(sleep_t)
 
             # 3) Submit
+            # 3) Submit
             ok = click_submit(page)
             time.sleep(sleep_t)
             if not ok:
-                dump_debug(page, reason="Submit not clickable")
-                raise RuntimeError("Could not click 'Submit' button.")
+                dump_debug(page, reason="Submit not clickable (redo)")
+                print("[ERROR] Submit still not clickable on redo.")
+                return False
 
+            # 3/B) Confirm 'processing' appears; try one more click if needed
             try:
                 has_processing = page.locator("gradio-app .progress-text").count() > 0
                 if not has_processing:
-                    print("!!![ERROR] No 'processing' visible skipping file for now!!!")
-                    continue
-
-            except Exception:
-                pass
+                    print("[DEBUG] No 'processing' visible after redo -> clicking submit again")
+                    click_submit(page)
+                    time.sleep(sleep_t)
+                    has_processing = page.locator("gradio-app .progress-text").count() > 0
+                if not has_processing:
+                    print("[ERROR] Still no 'processing' after redo.")
+                    dump_debug(page, reason="no processing after redo")
+                    return False
+            except Exception as e:
+                print("[WARN] Processing check failed on redo:", e)
+                # Be conservative: treat as failure
+                return False
 
             timer("start")
             say_time()
 
-            # 4) Output
+            # 4) Output with timeout
             textarea_sel = "gradio-app #component-10 textarea[data-testid='textbox']"
-            text_value = wait_for_nonempty_textarea(page, textarea_sel)
-            time.sleep(sleep_t)
+            try:
+                text_value = wait_for_output_with_timeout(page, textarea_sel, MAX_PROCESS_WAIT)
+            except TimeoutError as e:
+                print(f"[ERROR] {e}  Skipping: {f.name}")
+                dump_debug(page, reason="processing timeout")
+                # Optional: mark as visited with a tag so it won't loop forever
+                # add_to_visited(f.name + " [TIMEOUT]")
+                # Optional: soft reset the page so the next file starts clean
+                safe_reload(page)
+                continue
+            except RuntimeError as e:
+                print(f"[ERROR] {e}  Skipping: {f.name}")
+                dump_debug(page, reason="server error")
+                safe_reload(page)
+                continue
 
             # 5) TextGrid link (optional)
             tg_link = ""
