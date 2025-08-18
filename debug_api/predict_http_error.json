@@ -1,4 +1,16 @@
 {
   "status": 404,
-  "text": "{\"detail\":\"Not Found\"}"
+  "text": "{\"detail\":\"Not Found\"}",
+  "endpoint": "api/predict/partial_2",
+  "payload": {
+    "data": [
+      {
+        "path": "/tmp/gradio/7c574c6bc89225ce737b82bbf49b3f5d7c61fc5f2bcf1bbfbc9032e71a070be4/vrtest3p.m4a"
+      },
+      [
+        "Punctuation and Capitalization",
+        "Diarization"
+      ]
+    ]
+  }
 }

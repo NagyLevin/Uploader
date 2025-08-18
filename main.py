@@ -17,6 +17,9 @@ OUTPUT_DIR = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celan
 # Allowed audio extensions
 ALLOWED_EXTS = {".mp3", ".m4a", ".wav", ".flac", ".ogg"}
 
+# These are the two critical options you want enabled
+EXTRA_OPTIONS = ["Punctuation and Capitalization", "Diarization"]
+
 # HTTP timeout (seconds)
 HTTP_TIMEOUT = 120
 
@@ -87,7 +90,7 @@ def jdump(obj: Any, path: pathlib.Path, note: str = ""):
 
 
 # -------------------------------
-# Discovery helpers (optional but useful)
+# Discovery helpers
 # -------------------------------
 def discover_fn_index_and_flags(base: str) -> Tuple[Optional[int], bool]:
     """
@@ -106,7 +109,6 @@ def discover_fn_index_and_flags(base: str) -> Tuple[Optional[int], bool]:
             deps = cfg.get("dependencies") or []
             for dep in deps:
                 if isinstance(dep, dict) and dep.get("api_name") == "partial_2":
-                    # In Gradio Blocks, 'id' works as fn_index for /api/predict fallback.
                     fn_index = dep.get("id")
                     break
     except Exception:
@@ -161,42 +163,61 @@ class GradioClient:
         return {"path": file_path_str}
 
     def _predict_try(self, endpoint: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Try a single endpoint; return JSON on success, or None on failure.
+        """
         url = self.base + endpoint
         r = self.session.post(url, json=payload, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
-            jdump({"status": r.status_code, "text": r.text[:5000]}, DEBUG_DIR / "predict_http_error.json", note="predict")
+            jdump({"status": r.status_code, "text": r.text[:5000], "endpoint": endpoint, "payload": payload},
+                  DEBUG_DIR / "predict_http_error.json", note="predict")
             return None
         try:
             resp = r.json()
         except Exception:
-            jdump({"raw": r.text[:5000]}, DEBUG_DIR / "predict_nonjson_response.json", note="predict")
+            jdump({"raw": r.text[:5000], "endpoint": endpoint},
+                  DEBUG_DIR / "predict_nonjson_response.json", note="predict")
             return None
         if isinstance(resp, dict) and resp.get("error"):
-            jdump(resp, DEBUG_DIR / "predict_error_payload.json", note="predict_error")
+            jdump(resp, DEBUG_DIR / "predict_error_payload.json", note=f"predict_error via {endpoint}")
             return None
         jdump(resp, DEBUG_DIR / f"last_predict_response.json", note=f"OK via {endpoint}")
         return resp
 
-    def predict(self, filedata: Dict[str, Any]) -> Dict[str, Any]:
+    def predict_with_options_then_fallback(self, filedata: Dict[str, Any], options: List[str]) -> Dict[str, Any]:
         """
-        Try name-based routes first, then fallback to fn_index on /api/predict.
+        First try with options; if the server rejects (422/400/error), fallback to [].
         """
-        payload_named = {"data": [filedata, []]}  # [Audio(FileData), CheckboxGroup([])]
-        # 1) /api/route/<api_name>
-        resp = self._predict_try(f"api/route/{self.api_name}", payload_named)
-        if resp is not None:
-            return resp
-        # 2) /api/predict/<api_name>
-        resp = self._predict_try(f"api/predict/{self.api_name}", payload_named)
-        if resp is not None:
-            return resp
-        # 3) /api/predict + fn_index
+        # Payload with requested features
+        payload_opts = {"data": [filedata, options]}
+
+        # Try named routes with options
+        for ep in (f"api/route/{self.api_name}", f"api/predict/{self.api_name}"):
+            resp = self._predict_try(ep, payload_opts)
+            if resp is not None:
+                return resp
+
+        # Try fn_index with options
         if self.fn_index is not None:
-            payload_fn = {"fn_index": self.fn_index, "data": [filedata, []]}
+            payload_fn = {"fn_index": self.fn_index, "data": [filedata, options]}
             resp = self._predict_try("api/predict", payload_fn)
             if resp is not None:
                 return resp
-        raise RuntimeError("All predict attempts failed (route and fn_index).")
+
+        # Fallback to empty options (server may not accept values even if UI displays them)
+        print("[WARN] Options payload rejected; falling back to empty checkbox list [].")
+        payload_empty = {"data": [filedata, []]}
+        for ep in (f"api/route/{self.api_name}", f"api/predict/{self.api_name}"):
+            resp = self._predict_try(ep, payload_empty)
+            if resp is not None:
+                return resp
+        if self.fn_index is not None:
+            payload_fn_empty = {"fn_index": self.fn_index, "data": [filedata, []]}
+            resp = self._predict_try("api/predict", payload_fn_empty)
+            if resp is not None:
+                return resp
+
+        raise RuntimeError("All predict attempts failed (with options and fallback).")
 
     @staticmethod
     def extract_text_outputs(resp: Dict[str, Any]) -> List[str]:
@@ -243,6 +264,7 @@ class GradioClient:
                 for v in x:
                     walk(v)
         walk(resp)
+        # Prefer TextGrid first
         return sorted(set(links), key=lambda s: (".TextGrid" not in s, s))
 
 
@@ -302,9 +324,9 @@ def main():
             jdump({"error": str(e)}, DEBUG_DIR / f"upload_error_{f.stem}.json")
             continue
 
-        # 2) Predict (named endpoint with fallbacks)
+        # 2) Predict with requested options, then fallback if rejected
         try:
-            resp = api.predict(filedata)
+            resp = api.predict_with_options_then_fallback(filedata, EXTRA_OPTIONS)
         except Exception as e:
             print("[ERROR] Predict failed:", e)
             jdump({"error": str(e)}, DEBUG_DIR / f"predict_error_{f.stem}.json")
