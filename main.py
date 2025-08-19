@@ -17,9 +17,9 @@ OUTPUT_DIR = pathlib.Path("/home/szabol/leiratok")
 
 ALLOWED_EXTS      = {".mp3", ".m4a", ".wav", ".flac", ".ogg"}
 EXTRA_OPTIONS     = ["Punctuation and Capitalization", "Diarization"]  # will try; falls back to []
-HTTP_TIMEOUT_CONN = 3000      # connect timeout (seconds)
+HTTP_TIMEOUT_CONN = 6000      # connect timeout (seconds)
 HTTP_TIMEOUT_READ = 6000     # read timeout for predict (seconds)
-HTTP_TIMEOUT_UPLD = 3000     # read timeout for upload (seconds)
+HTTP_TIMEOUT_UPLD = 6000     # read timeout for upload (seconds)
 MAX_RETRIES       = 3       # retries for predict
 BACKOFF_SEC       = 5       # sleep between retries
 VISITED_FILE      = pathlib.Path("./visited.txt")
@@ -170,6 +170,9 @@ class GradioClient:
         """Single POST to /api/predict with JSON payload; returns JSON dict or None."""
         url = self.base + "api/predict"
         log(f"[TRY] POST {url}  ({label})  timeout={HTTP_TIMEOUT_READ}s")
+        say_time()
+        timer("start")
+        print("working on your file...")
         try:
             r = self.sess.post(url, json=payload, timeout=(HTTP_TIMEOUT_CONN, HTTP_TIMEOUT_READ))
             if not r.ok:
@@ -288,8 +291,7 @@ def main():
 
     for f in files:
         step(f"PROCESS FILE: {f.name}")
-        timer("start")
-        say_time()
+
 
         # 1) Upload
         try:
