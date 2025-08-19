@@ -10,16 +10,14 @@ import requests
 
 # ---- Config (ASCII-safe) ----
 BASE_URL   = "https://phon.nytud.hu/beast2/"
-#FILES_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")
-#OUTPUT_DIR = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/javtest")
-FILES_DIR  = pathlib.Path("/home/datasets/raw-data/podcasts")
-OUTPUT_DIR = pathlib.Path("/home/szabol/leiratok")
+FILES_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")
+OUTPUT_DIR = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/javtest")
 
 ALLOWED_EXTS      = {".mp3", ".m4a", ".wav", ".flac", ".ogg"}
 EXTRA_OPTIONS     = ["Punctuation and Capitalization", "Diarization"]  # will try; falls back to []
-HTTP_TIMEOUT_CONN = 6000      # connect timeout (seconds)
+HTTP_TIMEOUT_CONN = 3000      # connect timeout (seconds)
 HTTP_TIMEOUT_READ = 6000     # read timeout for predict (seconds)
-HTTP_TIMEOUT_UPLD = 6000     # read timeout for upload (seconds)
+HTTP_TIMEOUT_UPLD = 3000     # read timeout for upload (seconds)
 MAX_RETRIES       = 3       # retries for predict
 BACKOFF_SEC       = 5       # sleep between retries
 VISITED_FILE      = pathlib.Path("./visited.txt")
@@ -44,7 +42,7 @@ def step(title: str) -> None:
 
 
 # -------------------------------
-# URL normalise, removes to many slashes
+# Small utils
 # -------------------------------
 def ensure_base(url: str) -> str:
     return url.rstrip("/") + "/"
@@ -64,51 +62,15 @@ def is_visited(name: str) -> bool:
     return name in {x.strip() for x in VISITED_FILE.read_text(encoding="utf-8").splitlines() if x.strip()}
 
 def find_audio_files(root: pathlib.Path) -> List[pathlib.Path]:
-    # Collect all files (recursively) under the root directory
-    all_files = []
-    for p in root.rglob("*"):
-        if p.is_file():
-            all_files.append(p)
-
-    # Filter only allowed extensions (.mp3, .m4a, etc.)
-    files = []
-    for p in all_files:
-        ext = p.suffix.lower()
-        if ext in ALLOWED_EXTS and not is_visited(p.name):
-            files.append(p)
-
-    # Track files that are skipped (not in allowed extensions)
-    skipped = []
-    for p in all_files:
-        ext = p.suffix.lower()
-        if ext not in ALLOWED_EXTS:
-            skipped.append(p)
-
-    # If any files were skipped, log them
+    all_files = [p for p in root.rglob("*") if p.is_file()]
+    files = [p for p in all_files if p.suffix.lower() in ALLOWED_EXTS and not is_visited(p.name)]
+    skipped = [p for p in all_files if p.suffix.lower() not in ALLOWED_EXTS]
     if skipped:
-        skipped_names = ", ".join(s.name for s in skipped)
-        log("[INFO] Skipped (not audio): " + skipped_names)
-
-    # Return the list of valid audio files
+        log("[INFO] Skipped (not audio): " + ", ".join(s.name for s in skipped))
     return files
 
 def pick_best_text(texts: List[str]) -> str:
     return max(texts, key=len) if texts else ""
-
-def timer(action="start"):
-    global _start_time
-    if action == "start":
-        _start_time = time.time()
-        print("Timer started...")
-    elif action == "stop":
-        if _start_time is None:
-            print("Start the timer first!")
-        else:
-            elapsed = time.time() - _start_time
-            print(f"Elapsed: {elapsed:.3f} sec")
-            _start_time = None
-    else:
-        print("Unknown timer action. Use: timer('start') or timer('stop')")
 
 
 # -------------------------------
@@ -146,10 +108,10 @@ class GradioClient:
         self.fn_index = discover_fn_index(self.base)  # required for /api/predict
 
     def upload(self, path: pathlib.Path) -> Dict[str, Any]:
-        """Upload file to /upload return FileData: {'path': '...'}"""
+        """Upload file to /upload → return FileData: {'path': '...'}"""
         url = self.base + "upload"
         size_mb = path.stat().st_size / (1024 * 1024)
-        log(f"[STEP] UPLOAD  {url}")
+        log(f"[STEP] UPLOAD → {url}")
         log(f"      file: {path.name} ({size_mb:.2f} MB)")
         mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         with path.open("rb") as f:
@@ -170,9 +132,6 @@ class GradioClient:
         """Single POST to /api/predict with JSON payload; returns JSON dict or None."""
         url = self.base + "api/predict"
         log(f"[TRY] POST {url}  ({label})  timeout={HTTP_TIMEOUT_READ}s")
-        say_time()
-        timer("start")
-        print("working on your file...")
         try:
             r = self.sess.post(url, json=payload, timeout=(HTTP_TIMEOUT_CONN, HTTP_TIMEOUT_READ))
             if not r.ok:
@@ -192,7 +151,7 @@ class GradioClient:
             log(f"[TIMEOUT] Read timeout on /api/predict ({label}) after {HTTP_TIMEOUT_READ}s")
             return None
         except Exception as e:
-            log(f"[EXC] /api/predict ({label}) -> {e}")
+            log(f"[EXC] /api/predict ({label}) → {e}")
             log(traceback.format_exc(limit=2).strip())
             return None
 
@@ -213,24 +172,11 @@ class GradioClient:
             if resp is not None:
                 return resp
             if attempt < MAX_RETRIES:
-                log(f"[BACKOFF] sleeping {BACKOFF_SEC}s before next attempt")
+                log(f"[BACKOFF] sleeping {BACKOFF_SEC}s before next attempt…")
                 time.sleep(BACKOFF_SEC)
 
         raise RuntimeError("All /api/predict attempts failed")
 
-
-    """
-    {
-      "data": [
-        "Hello world",
-        {"text": "Subtitle A"},
-        {"label": "Speaker 1"}
-      ],
-      "error": null,
-      "extra": "Some note"
-    }
-    expected structure
-    """
     @staticmethod
     def extract_texts(resp: Dict[str, Any]) -> List[str]:
         """Collect strings from common Gradio response shapes."""
@@ -291,7 +237,8 @@ def main():
 
     for f in files:
         step(f"PROCESS FILE: {f.name}")
-
+        log("Timer started…")
+        say_time()
 
         # 1) Upload
         try:
@@ -327,7 +274,6 @@ def main():
         save_transcript(OUTPUT_DIR, f, best, res_id=res_id)
 
         log("[DONE] File processed.\n")
-        timer("stop")
         add_to_visited(f.name)
 
     log("[ALL DONE] All files saved to OUTPUT_DIR.")
