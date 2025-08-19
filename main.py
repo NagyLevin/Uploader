@@ -3,6 +3,8 @@ import json
 import pathlib
 import mimetypes
 import traceback
+import subprocess
+import shlex
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
@@ -16,11 +18,16 @@ OUTPUT_DIR = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celan
 ALLOWED_EXTS      = {".mp3", ".m4a", ".wav", ".flac", ".ogg"}
 EXTRA_OPTIONS     = ["Punctuation and Capitalization", "Diarization"]  # will try; falls back to []
 HTTP_TIMEOUT_CONN = 3000      # connect timeout (seconds)
-HTTP_TIMEOUT_READ = 6000     # read timeout for predict (seconds)
-HTTP_TIMEOUT_UPLD = 3000     # read timeout for upload (seconds)
-MAX_RETRIES       = 3       # retries for predict
-BACKOFF_SEC       = 5       # sleep between retries
+HTTP_TIMEOUT_READ = 6000      # read timeout for predict (seconds)
+HTTP_TIMEOUT_UPLD = 3000      # read timeout for upload (seconds)
+MAX_RETRIES       = 3         # retries for predict
+BACKOFF_SEC       = 5         # sleep between retries
 VISITED_FILE      = pathlib.Path("./visited.txt")
+
+# --- Chunking config ---
+SIZE_SPLIT_MB              = 50     # if file size >= 50 MB, split into chunks
+CHUNK_SEC                  = 600    # split into 10-minute chunks
+REUPLOAD_EACH_TRY_FOR_BIG  = True   # for big files, re-upload before each retry
 
 
 # -------------------------------
@@ -32,9 +39,7 @@ def tstamp() -> str:
 def log(msg: str) -> None:
     print(f"[{tstamp()}] {msg}")
 
-"""
-Fancy file name show
-"""
+# Pretty step logging
 def step(title: str) -> None:
     print("\n" + "=" * 70)
     print(f"== {title}")
@@ -73,6 +78,30 @@ def pick_best_text(texts: List[str]) -> str:
     return max(texts, key=len) if texts else ""
 
 
+def is_big_file(path: pathlib.Path) -> bool:
+    return (path.stat().st_size / (1024 * 1024)) >= SIZE_SPLIT_MB
+
+
+def ffmpeg_split(input_path: pathlib.Path, chunk_sec: int = CHUNK_SEC) -> List[pathlib.Path]:
+    """Split audio into chunks (lossless, -c copy). Output: inputname__partNN.ext"""
+    out_dir = input_path.parent / f"__chunks_{input_path.stem}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_pattern = out_dir / (input_path.stem + "__part%03d" + input_path.suffix)
+    cmd = (
+        f"ffmpeg -hide_banner -nostdin -y -i {shlex.quote(str(input_path))} "
+        f"-c copy -f segment -segment_time {int(chunk_sec)} {shlex.quote(str(out_pattern))}"
+    )
+    log(f"[STEP] Local split with ffmpeg: {cmd}")
+    res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if res.returncode != 0:
+        log("[ERROR] ffmpeg split failed")
+        log(res.stderr.decode(errors="ignore")[:2000])
+        raise RuntimeError("ffmpeg split failed")
+    parts = sorted(out_dir.glob(input_path.stem + "__part*" + input_path.suffix))
+    log(f"[OK] Created {len(parts)} chunk(s)")
+    return parts
+
+
 # -------------------------------
 # Gradio discovery
 # -------------------------------
@@ -82,7 +111,7 @@ def discover_fn_index(base: str) -> Optional[int]:
     log(f"[STEP] Discover fn_index via GET {url}")
     try:
         r = requests.get(url, timeout=(HTTP_TIMEOUT_CONN, 60))
-        if r.ok and r.headers.get("content-type","").startswith("application/json"):
+        if r.ok and r.headers.get("content-type", "").startswith("application/json"):
             cfg = r.json()
             deps = cfg.get("dependencies", [])
             for dep in deps:
@@ -155,27 +184,11 @@ class GradioClient:
             log(traceback.format_exc(limit=2).strip())
             return None
 
-    def predict(self, filedata: Dict[str, Any], options: List[str]) -> Dict[str, Any]:
-        """
-        Predict using only /api/predict with fn_index:
-          1) try with options like dia and capital
-        Both with retry/backoff.
-        """
+    def predict_once(self, filedata: Dict[str, Any], options: List[str]) -> Optional[Dict[str, Any]]:
         if self.fn_index is None:
             raise RuntimeError("fn_index not discovered; cannot call /api/predict")
-
-        # (1) with options
         payload_opts = {"fn_index": self.fn_index, "data": [filedata, options]}
-        for attempt in range(1, MAX_RETRIES + 1):
-            log(f"[DEBUG] /api/predict (with options) attempt {attempt}/{MAX_RETRIES}")
-            resp = self._post_json(payload_opts, "with options (fn_index)")
-            if resp is not None:
-                return resp
-            if attempt < MAX_RETRIES:
-                log(f"[BACKOFF] sleeping {BACKOFF_SEC}s before next attempt…")
-                time.sleep(BACKOFF_SEC)
-
-        raise RuntimeError("All /api/predict attempts failed")
+        return self._post_json(payload_opts, "with options (fn_index)")
 
     @staticmethod
     def extract_texts(resp: Dict[str, Any]) -> List[str]:
@@ -203,6 +216,60 @@ class GradioClient:
             if s not in seen:
                 res.append(s); seen.add(s)
         return res
+
+
+# -------------------------------
+# Higher-level helpers (retry + chunking)
+# -------------------------------
+def process_file_with_retry(api: GradioClient, f: pathlib.Path) -> str:
+    """
+    Upload + predict with retries.
+    For big files, optionally re-upload before each retry.
+    Returns the best text found.
+    """
+    filedata = api.upload(f)
+    best_resp: Optional[Dict[str, Any]] = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        log(f"[DEBUG] /api/predict (with options) attempt {attempt}/{MAX_RETRIES}")
+        resp = api.predict_once(filedata, EXTRA_OPTIONS)
+        if resp is not None:
+            best_resp = resp
+            break
+        if attempt < MAX_RETRIES:
+            log(f"[BACKOFF] sleeping {BACKOFF_SEC}s before next attempt…")
+            time.sleep(BACKOFF_SEC)
+            if REUPLOAD_EACH_TRY_FOR_BIG and is_big_file(f):
+                try:
+                    filedata = api.upload(f)
+                except Exception as e:
+                    log(f"[WARN] Re-upload failed before next attempt: {e}")
+
+    if best_resp is None:
+        raise RuntimeError("All /api/predict attempts failed")
+
+    texts = GradioClient.extract_texts(best_resp)
+    return pick_best_text(texts)
+
+
+def process_maybe_chunked(api: GradioClient, f: pathlib.Path) -> str:
+    """If file is large, split locally and merge transcripts, otherwise process normally."""
+    if not is_big_file(f):
+        return process_file_with_retry(api, f)
+
+    log("[INFO] Big file detected → splitting locally to avoid 502 timeouts…")
+    parts = ffmpeg_split(f, CHUNK_SEC)
+    merged: List[str] = []
+    for i, part in enumerate(parts, 1):
+        step(f"PROCESS CHUNK {i}/{len(parts)}: {part.name}")
+        say_time()
+        try:
+            text = process_file_with_retry(api, part)
+        except Exception as e:
+            log(f"[ERROR] Predict failed for chunk {i}: {e}")
+            text = f"[Chunk {i} failed]\n"
+        merged.append(f"=== [Chunk {i}] {part.name} ===\n{text}\n")
+    return "\n".join(merged)
 
 
 # -------------------------------
@@ -240,38 +307,15 @@ def main():
         log("Timer started…")
         say_time()
 
-        # 1) Upload
         try:
-            filedata = api.upload(f)  # {'path': '...'}
-        except Exception as e:
-            log(f"[ERROR] Upload failed: {e}")
-            log(traceback.format_exc(limit=2).strip())
-            continue
-
-        # 2) Predict (fn_index only; with options)
-        try:
-            resp = api.predict(filedata, EXTRA_OPTIONS)
+            best_text = process_maybe_chunked(api, f)
         except Exception as e:
             log(f"[ERROR] Predict failed: {e}")
             log(traceback.format_exc(limit=2).strip())
             continue
 
-        # 3) Extract best text
-        texts = api.extract_texts(resp)
-        best = pick_best_text(texts)
-        log(f"[INFO] Extracted {len(texts)} text segment(s), picked best length={len(best)}")
-
-        # Optional result id (if the backend adds one)
-        res_id = None
-        if isinstance(resp, dict):
-            for k in ("id", "result_id", "run_id"):
-                v = resp.get(k)
-                if isinstance(v, str) and v.strip():
-                    res_id = v.strip()
-                    break
-
-        # 4) Save transcript
-        save_transcript(OUTPUT_DIR, f, best, res_id=res_id)
+        log(f"[INFO] Picked best length={len(best_text)}")
+        save_transcript(OUTPUT_DIR, f, best_text, res_id=None)
 
         log("[DONE] File processed.\n")
         add_to_visited(f.name)
