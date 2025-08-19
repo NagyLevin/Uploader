@@ -8,15 +8,19 @@ import shlex
 import shutil
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+import os
+import re
 
 import requests
 
 # ---- Config (ASCII-safe) ----
 BASE_URL   = "https://phon.nytud.hu/beast2/"
-FILES_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")
-OUTPUT_DIR = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/javtest")
+#FILES_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")
+#OUTPUT_DIR = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/javtest")
+FILES_DIR  = pathlib.Path("/home/datasets/raw-data/podcasts")
+OUTPUT_DIR = pathlib.Path("/home/szabol/leiratok")
 
-ALLOWED_EXTS      = {".mp3", ".m4a", ".wav", ".flac", ".ogg"}
+ALLOWED_EXTS      = {".mp3", ".m4a"}
 EXTRA_OPTIONS     = ["Punctuation and Capitalization", "Diarization"]  # will try; falls back to []
 HTTP_TIMEOUT_CONN = 3000      # connect timeout (seconds)
 HTTP_TIMEOUT_READ = 6000      # read timeout for predict (seconds)
@@ -30,7 +34,6 @@ SIZE_SPLIT_MB              = 50     # if file size >= 50 MB, split into chunks
 CHUNK_SEC                  = 600    # split into 10-minute chunks
 REUPLOAD_EACH_TRY_FOR_BIG  = True   # for big files, re-upload before each retry
 CHUNK_BASE_DIR             = pathlib.Path(__file__).parent / "chunks_tmp"
-
 
 # -------------------------------
 # Logging helpers
@@ -46,7 +49,6 @@ def step(title: str) -> None:
     print("\n" + "=" * 70)
     print(f"== {title}")
     print("=" * 70)
-
 
 # -------------------------------
 # Small utils
@@ -93,38 +95,91 @@ def find_audio_files(root: pathlib.Path) -> List[pathlib.Path]:
 def pick_best_text(texts: List[str]) -> str:
     return max(texts, key=len) if texts else ""
 
-
 def is_big_file(path: pathlib.Path) -> bool:
     return (path.stat().st_size / (1024 * 1024)) >= SIZE_SPLIT_MB
 
+def _safe_stem(stem: str) -> str:
+    # keep letters, digits, dot, underscore, dash; replace others with underscore
+    return re.sub(r'[^A-Za-z0-9._-]+', '_', stem)
 
 def ffmpeg_split(input_path: pathlib.Path, chunk_sec: int = CHUNK_SEC) -> List[pathlib.Path]:
-    """Split audio into chunks (lossless, -c copy). Output: inputname__partNN.ext"""
-    out_dir = CHUNK_BASE_DIR / input_path.stem
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_pattern = out_dir / (input_path.stem + "__part%03d" + input_path.suffix)
-    cmd = (
-        f"ffmpeg -hide_banner -nostdin -y -i {shlex.quote(str(input_path))} "
-        f"-c copy -f segment -segment_time {int(chunk_sec)} {shlex.quote(str(out_pattern))}"
+    """Split audio into chunks under chunks_tmp/, using sanitized names.
+    Detect ffmpeg from PATH, $FFMPEG_BIN, or imageio-ffmpeg. Falls back to re-encode if stream-copy fails.
+    """
+    # sanitize output folder/name
+    safe = _safe_stem(input_path.stem)
+    out_dir = CHUNK_BASE_DIR / safe
+
+    # start clean if leftovers exist
+    if out_dir.exists() and any(out_dir.iterdir()):
+        shutil.rmtree(out_dir)
+        log(f"[CLEANUP] Removed leftover chunk directory before splitting: {out_dir}")
+    out_dir.mkdir(parents=True, exist_ok=True)  # ffmpeg won't create it
+
+    # resolve ffmpeg executable: PATH -> $FFMPEG_BIN -> imageio-ffmpeg
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        env_ff = os.environ.get("FFMPEG_BIN")
+        if env_ff:
+            ff = shutil.which(env_ff) or env_ff
+    if not ff:
+        try:
+            import imageio_ffmpeg
+            ff = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            ff = None
+    if not ff:
+        raise RuntimeError(
+            "ffmpeg not found. Install it, export FFMPEG_BIN, or install imageio-ffmpeg in your venv."
+        )
+
+    # --- Attempt 1: fast stream-copy split (no re-encode) ---
+    out_pattern1 = out_dir / (safe + "__part%03d" + input_path.suffix)
+    cmd1 = (
+        f"{shlex.quote(ff)} -hide_banner -nostdin -y -i {shlex.quote(str(input_path))} "
+        f"-c copy -f segment -segment_time {int(chunk_sec)} {shlex.quote(str(out_pattern1))}"
     )
-    log(f"[STEP] Local split with ffmpeg: {cmd}")
-    res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if res.returncode != 0:
-        log("[ERROR] ffmpeg split failed")
-        log(res.stderr.decode(errors="ignore")[:2000])
-        raise RuntimeError("ffmpeg split failed")
-    parts = sorted(out_dir.glob(input_path.stem + "__part*" + input_path.suffix))
+    log(f"[STEP] Local split with ffmpeg (stream copy): {cmd1}")
+    res1 = subprocess.run(cmd1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    if res1.returncode != 0:
+        log("[WARN] ffmpeg stream-copy split failed; stderr (head):")
+        log(res1.stderr.decode(errors="ignore")[:1000])
+
+        # clean partial outputs (if any)
+        for p in out_dir.glob("*"):
+            try:
+                p.unlink()
+            except Exception:
+                pass
+
+        # --- Attempt 2: robust fallback with re-encode (mp3) ---
+        out_pattern2 = out_dir / (safe + "__part%03d.mp3")
+        cmd2 = (
+            f"{shlex.quote(ff)} -hide_banner -nostdin -y -i {shlex.quote(str(input_path))} "
+            f"-vn -sn -map 0:a:0? -c:a libmp3lame -q:a 4 "
+            f"-f segment -segment_time {int(chunk_sec)} -reset_timestamps 1 "
+            f"{shlex.quote(str(out_pattern2))}"
+        )
+        log(f"[STEP] Local split with ffmpeg (re-encode fallback): {cmd2}")
+        res2 = subprocess.run(cmd2, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if res2.returncode != 0:
+            log("[ERROR] ffmpeg split failed even after fallback; stderr (head):")
+            log(res2.stderr.decode(errors="ignore")[:1000])
+            raise RuntimeError("ffmpeg split failed")
+
+    # collect parts regardless of extension used
+    parts = sorted(out_dir.glob(safe + "__part*"))
     log(f"[OK] Created {len(parts)} chunk(s)")
     return parts
 
-
 def cleanup_chunks(input_path: pathlib.Path):
-    """Remove chunk directory after processing."""
-    out_dir = CHUNK_BASE_DIR / input_path.stem
+    """Remove chunk directory after processing (uses sanitized name)."""
+    safe = _safe_stem(input_path.stem)
+    out_dir = CHUNK_BASE_DIR / safe
     if out_dir.exists():
         shutil.rmtree(out_dir)
         log(f"[CLEANUP] Removed chunk directory: {out_dir}")
-
 
 # -------------------------------
 # Gradio discovery
@@ -148,7 +203,6 @@ def discover_fn_index(base: str) -> Optional[int]:
         log(f"[WARN] Discovery failed: {e}")
     return None
 
-
 # -------------------------------
 # Gradio API client (fn_index only)
 # -------------------------------
@@ -161,10 +215,10 @@ class GradioClient:
         self.fn_index = discover_fn_index(self.base)  # required for /api/predict
 
     def upload(self, path: pathlib.Path) -> Dict[str, Any]:
-        """Upload file to /upload → return FileData: {'path': '...'}"""
+        """Upload file to /upload -> return FileData: {'path': '...'}"""
         url = self.base + "upload"
         size_mb = path.stat().st_size / (1024 * 1024)
-        log(f"[STEP] UPLOAD → {url}")
+        log(f"[STEP] UPLOAD -> {url}")
         log(f"      file: {path.name} ({size_mb:.2f} MB)")
         mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
         with path.open("rb") as f:
@@ -183,7 +237,6 @@ class GradioClient:
     def _post_json(self, payload: Dict[str, Any], label: str) -> Optional[Dict[str, Any]]:
         url = self.base + "api/predict"
         log(f"[TRY] POST {url}  ({label})  timeout={HTTP_TIMEOUT_READ}s")
-
 
         try:
             r = self.sess.post(url, json=payload, timeout=(HTTP_TIMEOUT_CONN, HTTP_TIMEOUT_READ))
@@ -204,7 +257,7 @@ class GradioClient:
             log(f"[TIMEOUT] Read timeout on /api/predict ({label}) after {HTTP_TIMEOUT_READ}s")
             return None
         except Exception as e:
-            log(f"[EXC] /api/predict ({label}) → {e}")
+            log(f"[EXC] /api/predict ({label}) -> {e}")
             log(traceback.format_exc(limit=2).strip())
             return None
 
@@ -239,7 +292,6 @@ class GradioClient:
                 res.append(s); seen.add(s)
         return res
 
-
 # -------------------------------
 # Higher-level helpers (retry + chunking)
 # -------------------------------
@@ -252,12 +304,11 @@ def process_file_with_retry(api: GradioClient, f: pathlib.Path) -> str:
 
         resp = api.predict_once(filedata, EXTRA_OPTIONS)
 
-
         if resp is not None:
             best_resp = resp
             break
         if attempt < MAX_RETRIES:
-            log(f"[BACKOFF] sleeping {BACKOFF_SEC}s before next attempt…")
+            log(f"[BACKOFF] sleeping {BACKOFF_SEC}s before next attempt...")
             time.sleep(BACKOFF_SEC)
             if REUPLOAD_EACH_TRY_FOR_BIG and is_big_file(f):
                 try:
@@ -271,13 +322,12 @@ def process_file_with_retry(api: GradioClient, f: pathlib.Path) -> str:
     texts = GradioClient.extract_texts(best_resp)
     return pick_best_text(texts)
 
-
 def process_maybe_chunked(api: GradioClient, f: pathlib.Path) -> str:
     """If file is large, split locally and merge transcripts, otherwise process normally."""
     if not is_big_file(f):
         return process_file_with_retry(api, f)
 
-    log("[INFO] Big file detected → splitting locally to avoid 502 timeouts…")
+    log("[INFO] Big file detected -> splitting locally to avoid 502 timeouts...")
     parts = ffmpeg_split(f, CHUNK_SEC)
     merged: List[str] = []
     for i, part in enumerate(parts, 1):
@@ -313,7 +363,6 @@ def save_transcript(base_out: pathlib.Path, src_file: pathlib.Path, text: str, r
     log(f"[OK] Saved transcript: {out_path}")
     return out_path
 
-
 # -------------------------------
 # Main
 # -------------------------------
@@ -348,7 +397,6 @@ def main():
         add_to_visited(f.name)
 
     log("[ALL DONE] All files saved to OUTPUT_DIR.")
-
 
 if __name__ == "__main__":
     main()
