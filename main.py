@@ -5,6 +5,8 @@ import mimetypes
 import traceback
 import subprocess
 import shlex
+import shutil
+import argparse
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
@@ -24,10 +26,14 @@ MAX_RETRIES       = 3         # retries for predict
 BACKOFF_SEC       = 5         # sleep between retries
 VISITED_FILE      = pathlib.Path("./visited.txt")
 
-# --- Chunking config ---
-SIZE_SPLIT_MB              = 50     # if file size >= 50 MB, split into chunks
-CHUNK_SEC                  = 600    # split into 10-minute chunks
+# --- Chunking config (defaults; can be overridden by CLI) ---
+SIZE_SPLIT_MB              = 50     # if file size >= this, split into chunks
+CHUNK_SEC                  = 600    # 10-minute chunks
 REUPLOAD_EACH_TRY_FOR_BIG  = True   # for big files, re-upload before each retry
+CHUNK_BASE_DIR             = pathlib.Path(__file__).parent / "chunks_tmp"
+
+# will be set by CLI
+KEEP_CHUNKS                = False
 
 
 # -------------------------------
@@ -54,6 +60,22 @@ def ensure_base(url: str) -> str:
 
 def say_time():
     log("Time now: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+def timer(action="start"):
+    global _start_time
+    if action == "start":
+        _start_time = time.time()
+        print("Timer started...")
+    elif action == "stop":
+        if _start_time is None:
+            print("Start the timer first!")
+        else:
+            elapsed = time.time() - _start_time
+            print(f"Elapsed: {elapsed:.3f} sec")
+            _start_time = None
+    else:
+        print("Unknown timer action. Use: timer('start') or timer('stop')")
+
 
 def add_to_visited(name: str) -> None:
     VISITED_FILE.touch(exist_ok=True)
@@ -83,8 +105,14 @@ def is_big_file(path: pathlib.Path) -> bool:
 
 
 def ffmpeg_split(input_path: pathlib.Path, chunk_sec: int = CHUNK_SEC) -> List[pathlib.Path]:
-    """Split audio into chunks (lossless, -c copy). Output: inputname__partNN.ext"""
-    out_dir = input_path.parent / f"__chunks_{input_path.stem}"
+    """Split audio into chunks (lossless, -c copy). Output files live under chunks_tmp/<stem>/."""
+    out_dir = CHUNK_BASE_DIR / input_path.stem
+
+    # cleanup if exists and not empty (fresh start per your request)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        shutil.rmtree(out_dir)
+        log(f"[CLEANUP] Removed leftover chunk directory before splitting: {out_dir}")
+
     out_dir.mkdir(parents=True, exist_ok=True)
     out_pattern = out_dir / (input_path.stem + "__part%03d" + input_path.suffix)
     cmd = (
@@ -100,6 +128,17 @@ def ffmpeg_split(input_path: pathlib.Path, chunk_sec: int = CHUNK_SEC) -> List[p
     parts = sorted(out_dir.glob(input_path.stem + "__part*" + input_path.suffix))
     log(f"[OK] Created {len(parts)} chunk(s)")
     return parts
+
+
+def cleanup_chunks(input_path: pathlib.Path):
+    """Remove chunk directory after processing, unless --keep-chunks is set."""
+    if KEEP_CHUNKS:
+        log("[INFO] Keeping chunks (debug mode).")
+        return
+    out_dir = CHUNK_BASE_DIR / input_path.stem
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+        log(f"[CLEANUP] Removed chunk directory: {out_dir}")
 
 
 # -------------------------------
@@ -232,6 +271,8 @@ def process_file_with_retry(api: GradioClient, f: pathlib.Path) -> str:
 
     for attempt in range(1, MAX_RETRIES + 1):
         log(f"[DEBUG] /api/predict (with options) attempt {attempt}/{MAX_RETRIES}")
+        timer("start")
+        print("processing your file...")
         resp = api.predict_once(filedata, EXTRA_OPTIONS)
         if resp is not None:
             best_resp = resp
@@ -269,7 +310,10 @@ def process_maybe_chunked(api: GradioClient, f: pathlib.Path) -> str:
             log(f"[ERROR] Predict failed for chunk {i}: {e}")
             text = f"[Chunk {i} failed]\n"
         merged.append(f"=== [Chunk {i}] {part.name} ===\n{text}\n")
-    return "\n".join(merged)
+
+    final_text = "\n".join(merged)
+    cleanup_chunks(f)
+    return final_text
 
 
 # -------------------------------
@@ -289,9 +333,27 @@ def save_transcript(base_out: pathlib.Path, src_file: pathlib.Path, text: str, r
 
 
 # -------------------------------
+# CLI
+# -------------------------------
+def parse_args():
+    p = argparse.ArgumentParser(description="Batch upload & transcribe via Gradio /api/predict with local chunking.")
+    p.add_argument("--keep-chunks", action="store_true", help="Do not delete chunk files after processing (debug).")
+    p.add_argument("--size-split-mb", type=int, default=SIZE_SPLIT_MB, help="Split if file size >= MB (default: 50).")
+    p.add_argument("--chunk-sec", type=int, default=CHUNK_SEC, help="Chunk length in seconds (default: 600).")
+    return p.parse_args()
+
+
+# -------------------------------
 # Main
 # -------------------------------
 def main():
+    global KEEP_CHUNKS, SIZE_SPLIT_MB, CHUNK_SEC
+
+    args = parse_args()
+    KEEP_CHUNKS   = bool(args.keep_chunks)
+    SIZE_SPLIT_MB = int(args.size_split_mb)
+    CHUNK_SEC     = int(args.chunk_sec)
+
     base = ensure_base(BASE_URL)
     log(f"[BOOT] Using BASE_URL: {base}")
 
@@ -325,3 +387,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+"""
+python3 main.py --size-split-mb 80 --chunk-sec 900
+finetune
+"""
