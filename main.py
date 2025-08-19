@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
-import os
 import time
 import json
 import pathlib
 import mimetypes
+import traceback
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List
 
 import requests
 
@@ -14,287 +13,212 @@ BASE_URL   = "https://phon.nytud.hu/beast2/"
 FILES_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")
 OUTPUT_DIR = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/javtest")
 
-# Allowed audio extensions
-ALLOWED_EXTS = {".mp3", ".m4a", ".wav", ".flac", ".ogg"}
-
-# These are the two critical options you want enabled
-EXTRA_OPTIONS = ["Punctuation and Capitalization", "Diarization"]
-
-# HTTP timeout (seconds)
-HTTP_TIMEOUT = 120
-
-# Polling sleep
-SLEEP_T = 1.0
-
-# Bookkeeping files
-VISITED_FILE = pathlib.Path("./visited.txt")
-DEBUG_DIR = pathlib.Path("./debug_api")
-DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+ALLOWED_EXTS      = {".mp3", ".m4a", ".wav", ".flac", ".ogg"}
+EXTRA_OPTIONS     = ["Punctuation and Capitalization", "Diarization"]  # will try; falls back to []
+HTTP_TIMEOUT_CONN = 3000      # connect timeout (seconds)
+HTTP_TIMEOUT_READ = 6000     # read timeout for predict (seconds)
+HTTP_TIMEOUT_UPLD = 3000     # read timeout for upload (seconds)
+MAX_RETRIES       = 3       # retries for predict
+BACKOFF_SEC       = 5       # sleep between retries
+VISITED_FILE      = pathlib.Path("./visited.txt")
 
 
 # -------------------------------
-# Utility helpers
+# Logging helpers
 # -------------------------------
-def say_time():
-    now = datetime.now()
-    print("Time now:", now.strftime("%H:%M:%S"))
+def tstamp() -> str:
+    return datetime.now().strftime("%H:%M:%S")
 
-def add_to_visited(text: str) -> None:
-    """Append text to visited.txt if not present."""
-    VISITED_FILE.touch(exist_ok=True)
-    with VISITED_FILE.open("r", encoding="utf-8") as f:
-        visited = {line.strip() for line in f if line.strip()}
-    if text not in visited:
-        with VISITED_FILE.open("a", encoding="utf-8") as f:
-            f.write(text + "\n")
+def log(msg: str) -> None:
+    print(f"[{tstamp()}] {msg}")
 
-def check_visited(text: str) -> bool:
-    """Return True if text already in visited.txt."""
-    VISITED_FILE.touch(exist_ok=True)
-    with VISITED_FILE.open("r", encoding="utf-8") as f:
-        visited = {line.strip() for line in f if line.strip()}
-    return text in visited
+"""
+Fancy file name show
+"""
+def step(title: str) -> None:
+    print("\n" + "=" * 70)
+    print(f"== {title}")
+    print("=" * 70)
 
-def timer(action="start"):
-    """Simple wall-clock timer."""
-    if not hasattr(timer, "_t"):
-        timer._t = None
-    if action == "start":
-        timer._t = time.time()
-        print("Timer started...")
-    elif action == "stop":
-        if timer._t is None:
-            print("Start the timer first!")
-        else:
-            elapsed = time.time() - timer._t
-            print(f"Elapsed: {elapsed:.3f} sec")
-            timer._t = None
-    else:
-        print("Unknown timer action. Use: timer('start') or timer('stop')")
 
+# -------------------------------
+# Small utils
+# -------------------------------
 def ensure_base(url: str) -> str:
-    """Ensure BASE_URL ends with a single slash."""
     return url.rstrip("/") + "/"
 
-def jdump(obj: Any, path: pathlib.Path, note: str = ""):
-    """Save JSON for debugging."""
-    try:
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(obj, f, ensure_ascii=False, indent=2)
-        if note:
-            print(f"[DEBUG] Saved JSON to {path} ({note})")
-        else:
-            print(f"[DEBUG] Saved JSON to {path}")
-    except Exception as e:
-        print("[DEBUG] JSON dump error:", e)
+def say_time():
+    log("Time now: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+def add_to_visited(name: str) -> None:
+    VISITED_FILE.touch(exist_ok=True)
+    cur = set(x.strip() for x in VISITED_FILE.read_text(encoding="utf-8").splitlines() if x.strip())
+    if name not in cur:
+        with VISITED_FILE.open("a", encoding="utf-8") as f:
+            f.write(name + "\n")
+
+def is_visited(name: str) -> bool:
+    VISITED_FILE.touch(exist_ok=True)
+    return name in {x.strip() for x in VISITED_FILE.read_text(encoding="utf-8").splitlines() if x.strip()}
+
+def find_audio_files(root: pathlib.Path) -> List[pathlib.Path]:
+    all_files = [p for p in root.rglob("*") if p.is_file()]
+    files = [p for p in all_files if p.suffix.lower() in ALLOWED_EXTS and not is_visited(p.name)]
+    skipped = [p for p in all_files if p.suffix.lower() not in ALLOWED_EXTS]
+    if skipped:
+        log("[INFO] Skipped (not audio): " + ", ".join(s.name for s in skipped))
+    return files
+
+def pick_best_text(texts: List[str]) -> str:
+    return max(texts, key=len) if texts else ""
 
 
 # -------------------------------
-# Discovery helpers
+# Gradio discovery
 # -------------------------------
-def discover_fn_index_and_flags(base: str) -> Tuple[Optional[int], bool]:
-    """
-    Try to read /config to find fn_index for api_name 'partial_2' and enable_queue flag.
-    """
-    base = ensure_base(base)
-    cfg_url = base + "config"
-    fn_index = None
-    enable_queue = True
+def discover_fn_index(base: str) -> Optional[int]:
+    """Read /config to locate fn_index (dependency id) for api_name 'partial_2'."""
+    url = ensure_base(base) + "config"
+    log(f"[STEP] Discover fn_index via GET {url}")
     try:
-        r = requests.get(cfg_url, timeout=HTTP_TIMEOUT)
-        if r.status_code == 200 and r.headers.get("content-type","").startswith("application/json"):
+        r = requests.get(url, timeout=(HTTP_TIMEOUT_CONN, 60))
+        if r.ok and r.headers.get("content-type","").startswith("application/json"):
             cfg = r.json()
-            jdump(cfg, DEBUG_DIR / "discover_config.json", note="GET /config")
-            enable_queue = bool(cfg.get("enable_queue", True))
-            deps = cfg.get("dependencies") or []
+            deps = cfg.get("dependencies", [])
             for dep in deps:
                 if isinstance(dep, dict) and dep.get("api_name") == "partial_2":
                     fn_index = dep.get("id")
-                    break
-    except Exception:
-        pass
-    return fn_index, enable_queue
+                    log(f"[OK] fn_index discovered: {fn_index}")
+                    return fn_index
+        log("[WARN] Could not discover fn_index from /config.")
+    except Exception as e:
+        log(f"[WARN] Discovery failed: {e}")
+    return None
 
 
 # -------------------------------
-# Gradio API client (named endpoint with fallbacks)
+# Gradio API client (fn_index only)
 # -------------------------------
 class GradioClient:
-    """
-    - Uploads via /upload (returns list[str] with one absolute path)
-    - Predict tries:
-        1) /api/route/partial_2
-        2) /api/predict/partial_2
-        3) /api/predict  with fn_index (from /config)
-    """
+    """Upload via /upload, predict only via /api/predict + fn_index, with retries."""
 
     def __init__(self, base_url: str):
         self.base = ensure_base(base_url)
-        self.session = requests.Session()
-        self.upload_path = "upload"
-        self.api_name = "partial_2"
-        self.fn_index, self.enable_queue = discover_fn_index_and_flags(self.base)
-        print(f"[INFO] Discovery: fn_index={self.fn_index}, enable_queue={self.enable_queue}")
+        self.sess = requests.Session()
+        self.fn_index = discover_fn_index(self.base)  # required for /api/predict
 
-    def upload_file(self, file_path: pathlib.Path) -> Dict[str, Any]:
-        """
-        Upload a file via /upload.
-        Returns a FileData dict: {"path": "..."} suitable for Gradio JSON.
-        """
-        url = self.base + self.upload_path
-        mime = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-        with file_path.open("rb") as f:
-            files = {"files": (file_path.name, f, mime)}
-            r = self.session.post(url, files=files, timeout=HTTP_TIMEOUT)
+    def upload(self, path: pathlib.Path) -> Dict[str, Any]:
+        """Upload file to /upload → return FileData: {'path': '...'}"""
+        url = self.base + "upload"
+        size_mb = path.stat().st_size / (1024 * 1024)
+        log(f"[STEP] UPLOAD → {url}")
+        log(f"      file: {path.name} ({size_mb:.2f} MB)")
+        mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        with path.open("rb") as f:
+            r = self.sess.post(url, files={"files": (path.name, f, mime)}, timeout=(HTTP_TIMEOUT_CONN, HTTP_TIMEOUT_UPLD))
         r.raise_for_status()
         data = r.json()
-        # Newer Gradio returns e.g. ["/tmp/gradio/.../file.m4a"]
-        file_path_str = None
+        # Accept either list[str] or dict{"name": "file=..."}
         if isinstance(data, list) and data and isinstance(data[0], str):
-            file_path_str = data[0]
-        elif isinstance(data, dict) and "name" in data and isinstance(data["name"], str):
-            v = data["name"]
-            file_path_str = v.split("file=", 1)[-1]
-        else:
-            jdump(data, DEBUG_DIR / "unexpected_upload_response.json", note="upload_file")
-            raise RuntimeError("Unexpected upload response; could not extract uploaded path.")
+            log(f"[OK] Upload response (list path): {data[0]}")
+            return {"path": data[0]}
+        if isinstance(data, dict) and isinstance(data.get("name"), str):
+            p = data["name"].split("file=", 1)[-1]
+            log(f"[OK] Upload response (dict name): {p}")
+            return {"path": p}
+        raise RuntimeError("Unexpected /upload response")
 
-        print(f"[DEBUG] Uploaded path: {file_path_str}")
-        return {"path": file_path_str}
-
-    def _predict_try(self, endpoint: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Try a single endpoint; return JSON on success, or None on failure.
-        """
-        url = self.base + endpoint
-        r = self.session.post(url, json=payload, timeout=HTTP_TIMEOUT)
-        if r.status_code != 200:
-            jdump({"status": r.status_code, "text": r.text[:5000], "endpoint": endpoint, "payload": payload},
-                  DEBUG_DIR / "predict_http_error.json", note="predict")
-            return None
+    def _post_json(self, payload: Dict[str, Any], label: str) -> Optional[Dict[str, Any]]:
+        """Single POST to /api/predict with JSON payload; returns JSON dict or None."""
+        url = self.base + "api/predict"
+        log(f"[TRY] POST {url}  ({label})  timeout={HTTP_TIMEOUT_READ}s")
         try:
-            resp = r.json()
-        except Exception:
-            jdump({"raw": r.text[:5000], "endpoint": endpoint},
-                  DEBUG_DIR / "predict_nonjson_response.json", note="predict")
+            r = self.sess.post(url, json=payload, timeout=(HTTP_TIMEOUT_CONN, HTTP_TIMEOUT_READ))
+            if not r.ok:
+                log(f"[FAIL] HTTP {r.status_code} on /api/predict ({label})")
+                return None
+            try:
+                resp = r.json()
+            except Exception:
+                log(f"[FAIL] Non-JSON response on /api/predict ({label})")
+                return None
+            if isinstance(resp, dict) and resp.get("error"):
+                log(f"[FAIL] Backend error on /api/predict ({label}): {resp.get('error')}")
+                return None
+            log(f"[OK] /api/predict ({label})")
+            return resp
+        except requests.exceptions.ReadTimeout:
+            log(f"[TIMEOUT] Read timeout on /api/predict ({label}) after {HTTP_TIMEOUT_READ}s")
             return None
-        if isinstance(resp, dict) and resp.get("error"):
-            jdump(resp, DEBUG_DIR / "predict_error_payload.json", note=f"predict_error via {endpoint}")
+        except Exception as e:
+            log(f"[EXC] /api/predict ({label}) → {e}")
+            log(traceback.format_exc(limit=2).strip())
             return None
-        jdump(resp, DEBUG_DIR / f"last_predict_response.json", note=f"OK via {endpoint}")
-        return resp
 
-    def predict_with_options_then_fallback(self, filedata: Dict[str, Any], options: List[str]) -> Dict[str, Any]:
+    def predict(self, filedata: Dict[str, Any], options: List[str]) -> Dict[str, Any]:
         """
-        First try with options; if the server rejects (422/400/error), fallback to [].
+        Predict using only /api/predict with fn_index:
+          1) try with options like dia and capital
+        Both with retry/backoff.
         """
-        # Payload with requested features
-        payload_opts = {"data": [filedata, options]}
+        if self.fn_index is None:
+            raise RuntimeError("fn_index not discovered; cannot call /api/predict")
 
-        # Try named routes with options
-        for ep in (f"api/route/{self.api_name}", f"api/predict/{self.api_name}"):
-            resp = self._predict_try(ep, payload_opts)
+        # (1) with options
+        payload_opts = {"fn_index": self.fn_index, "data": [filedata, options]}
+        for attempt in range(1, MAX_RETRIES + 1):
+            log(f"[DEBUG] /api/predict (with options) attempt {attempt}/{MAX_RETRIES}")
+            resp = self._post_json(payload_opts, "with options (fn_index)")
             if resp is not None:
                 return resp
+            if attempt < MAX_RETRIES:
+                log(f"[BACKOFF] sleeping {BACKOFF_SEC}s before next attempt…")
+                time.sleep(BACKOFF_SEC)
 
-        # Try fn_index with options
-        if self.fn_index is not None:
-            payload_fn = {"fn_index": self.fn_index, "data": [filedata, options]}
-            resp = self._predict_try("api/predict", payload_fn)
-            if resp is not None:
-                return resp
-
-        # Fallback to empty options (server may not accept values even if UI displays them)
-        print("[WARN] Options payload rejected; falling back to empty checkbox list [].")
-        payload_empty = {"data": [filedata, []]}
-        for ep in (f"api/route/{self.api_name}", f"api/predict/{self.api_name}"):
-            resp = self._predict_try(ep, payload_empty)
-            if resp is not None:
-                return resp
-        if self.fn_index is not None:
-            payload_fn_empty = {"fn_index": self.fn_index, "data": [filedata, []]}
-            resp = self._predict_try("api/predict", payload_fn_empty)
-            if resp is not None:
-                return resp
-
-        raise RuntimeError("All predict attempts failed (with options and fallback).")
+        raise RuntimeError("All /api/predict attempts failed")
 
     @staticmethod
-    def extract_text_outputs(resp: Dict[str, Any]) -> List[str]:
-        """
-        Extract textual outputs from common Gradio response shapes.
-        """
-        texts = []
+    def extract_texts(resp: Dict[str, Any]) -> List[str]:
+        """Collect strings from common Gradio response shapes."""
+        out: List[str] = []
         if not isinstance(resp, dict):
-            return texts
+            return out
         for key in ("data", "result", "output"):
-            if key in resp and isinstance(resp[key], list):
-                for item in resp[key]:
+            v = resp.get(key)
+            if isinstance(v, list):
+                for item in v:
                     if isinstance(item, str) and item.strip():
-                        texts.append(item.strip())
+                        out.append(item.strip())
                     elif isinstance(item, dict):
                         for tk in ("text", "label", "value"):
-                            v = item.get(tk)
-                            if isinstance(v, str) and v.strip():
-                                texts.append(v.strip())
+                            s = item.get(tk)
+                            if isinstance(s, str) and s.strip():
+                                out.append(s.strip())
         for k, v in resp.items():
             if isinstance(v, str) and v.strip():
-                texts.append(v.strip())
+                out.append(v.strip())
         # Deduplicate preserving order
-        seen, out = set(), []
-        for t in texts:
-            if t not in seen:
-                out.append(t); seen.add(t)
-        return out
-
-    @staticmethod
-    def extract_links(resp: Dict[str, Any]) -> List[str]:
-        """
-        Extract any file URLs/paths (e.g., TextGrid).
-        """
-        links = []
-        def walk(x):
-            if isinstance(x, dict):
-                for k in ("url", "href", "path"):
-                    if k in x and isinstance(x[k], str):
-                        links.append(x[k])
-                for v in x.values():
-                    walk(v)
-            elif isinstance(x, list):
-                for v in x:
-                    walk(v)
-        walk(resp)
-        # Prefer TextGrid first
-        return sorted(set(links), key=lambda s: (".TextGrid" not in s, s))
+        seen, res = set(), []
+        for s in out:
+            if s not in seen:
+                res.append(s); seen.add(s)
+        return res
 
 
 # -------------------------------
-# File scanning & saving
+# Save helpers
 # -------------------------------
-def find_audio_files(root: pathlib.Path) -> List[pathlib.Path]:
-    """Recursively find eligible audio files under root, excluding already-visited names."""
-    all_files = [p for p in root.rglob("*") if p.is_file()]
-    files = [p for p in all_files if p.suffix.lower() in ALLOWED_EXTS and not check_visited(p.name)]
-    skipped = [p for p in all_files if p.suffix.lower() not in ALLOWED_EXTS]
-    if skipped:
-        print("[INFO] Skipped (not audio):", ", ".join(s.name for s in skipped))
-    return files
-
-def save_result(output_dir: pathlib.Path, file_in: pathlib.Path, text_value: str, res_id: Optional[str] = None):
-    """Save result text mirroring input structure with .txt extension."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    rel_path = file_in.relative_to(FILES_DIR)
-    out_path = (output_dir / rel_path).with_suffix(".txt")
+def save_transcript(base_out: pathlib.Path, src_file: pathlib.Path, text: str, res_id: Optional[str] = None) -> pathlib.Path:
+    base_out.mkdir(parents=True, exist_ok=True)
+    rel = src_file.relative_to(FILES_DIR)
+    out_path = (base_out / rel).with_suffix(".txt")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         if res_id:
             f.write(f"ID: {res_id}\n")
-        f.write(text_value if text_value else "[No output]\n")
-    print(f"[INFO] Saved: {out_path}")
-
-def pick_best_text(texts: List[str]) -> str:
-    """Heuristic: pick the longest textual output."""
-    return max(texts, key=len) if texts else ""
+        f.write(text if text else "[No output]\n")
+    log(f"[OK] Saved transcript: {out_path}")
+    return out_path
 
 
 # -------------------------------
@@ -302,66 +226,57 @@ def pick_best_text(texts: List[str]) -> str:
 # -------------------------------
 def main():
     base = ensure_base(BASE_URL)
-    print("[DEBUG] Using BASE_URL:", base)
+    log(f"[BOOT] Using BASE_URL: {base}")
 
     files = find_audio_files(FILES_DIR)
     if not files:
-        print(f"[ERROR] No eligible audio file in '{FILES_DIR}'.")
+        log(f"[ERROR] No eligible audio file in '{FILES_DIR}'.")
         return
 
     api = GradioClient(base)
 
     for f in files:
-        print("\n[INFO] Uploading:", f.name)
-        timer("start")
+        step(f"PROCESS FILE: {f.name}")
+        log("Timer started…")
         say_time()
 
         # 1) Upload
         try:
-            filedata = api.upload_file(f)   # {"path": "..."}
+            filedata = api.upload(f)  # {'path': '...'}
         except Exception as e:
-            print("[ERROR] Upload failed:", e)
-            jdump({"error": str(e)}, DEBUG_DIR / f"upload_error_{f.stem}.json")
+            log(f"[ERROR] Upload failed: {e}")
+            log(traceback.format_exc(limit=2).strip())
             continue
 
-        # 2) Predict with requested options, then fallback if rejected
+        # 2) Predict (fn_index only; with options)
         try:
-            resp = api.predict_with_options_then_fallback(filedata, EXTRA_OPTIONS)
+            resp = api.predict(filedata, EXTRA_OPTIONS)
         except Exception as e:
-            print("[ERROR] Predict failed:", e)
-            jdump({"error": str(e)}, DEBUG_DIR / f"predict_error_{f.stem}.json")
+            log(f"[ERROR] Predict failed: {e}")
+            log(traceback.format_exc(limit=2).strip())
             continue
 
-        # 3) Extract outputs
-        texts = api.extract_text_outputs(resp)
-        links = api.extract_links(resp)
-
-        # Optional: glean a result ID
-        res_id = None
-        for k in ("id", "result_id", "run_id"):
-            v = resp.get(k) if isinstance(resp, dict) else None
-            if isinstance(v, str) and v.strip():
-                res_id = v.strip()
-                break
-
+        # 3) Extract best text
+        texts = api.extract_texts(resp)
         best = pick_best_text(texts)
-        if not best:
-            print("[WARN] No text output detected; saving raw JSON pointer.")
-            jdump(resp, DEBUG_DIR / f"no_text_{f.stem}.json", note="no text output")
+        log(f"[INFO] Extracted {len(texts)} text segment(s), picked best length={len(best)}")
+
+        # Optional result id (if the backend adds one)
+        res_id = None
+        if isinstance(resp, dict):
+            for k in ("id", "result_id", "run_id"):
+                v = resp.get(k)
+                if isinstance(v, str) and v.strip():
+                    res_id = v.strip()
+                    break
 
         # 4) Save transcript
-        save_result(OUTPUT_DIR, f, best, res_id=res_id)
+        save_transcript(OUTPUT_DIR, f, best, res_id=res_id)
 
-        # 5) Show links (TextGrid etc.)
-        if links:
-            print("[INFO] Download links (first few):")
-            for l in links[:5]:
-                print("  -", l)
-
-        timer("stop")
+        log("[DONE] File processed.\n")
         add_to_visited(f.name)
 
-    print("[INFO] Done. All files saved to OUTPUT_DIR.")
+    log("[ALL DONE] All files saved to OUTPUT_DIR.")
 
 
 if __name__ == "__main__":
