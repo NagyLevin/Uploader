@@ -85,7 +85,7 @@ Timer started...
 processing your file...
 [11:16:59] [STEP] UPLOAD -> https://phon.nytud.hu/beast2/upload
 [11:16:59]       file: MIA-810004_0387=#387. Gépi adás.mp3 (48.65 MB)
-[11:16:59] [OK] Upload response (list path): /tmp/gradio/15a023b668a302215325abcf63b69ff8a0493687518b80f565610af33cc02ef5/MIA-810004_0387387. Gépi kaksi adás.mp3
+[11:16:59] [OK] Upload response (list path): /tmp/gradio/15a023b668a302215325abcf63b69ff8a0493687518b80f565610af33cc02ef5/MIA-810004_0387387. Gépi adás.mp3
 [11:16:59] [DEBUG] /api/predict (with options) attempt 1/3
 [11:16:59] [TRY] POST https://phon.nytud.hu/beast2/api/predict  (with options (fn_index))  timeout=6000s
 
