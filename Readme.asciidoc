@@ -93,12 +93,12 @@ processing your file...
 ---------
 ## Telepítési tippek
 
-*Telepítsd a függőségeket (például venv-ben)
+* Telepítsd a függőségeket (például venv-ben)
 
-*python -m venv .venv
+* python -m venv .venv
 
-*source .venv/bin/activate
+* source .venv/bin/activate
 
-*pip install -r requirements.txt
+* pip install -r requirements.txt
 
-*python3 main.py
+* python3 main.py
