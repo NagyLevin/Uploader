@@ -1,0 +1,104 @@
+# Beast Upload Automate: `main.py`
+by Levin
+\:toc:
+
+### Cél és összefoglaló
+Ez a script (\`main.py`) automatizálja a *Beast* (Gradio-alapú) ASR szolgáltatásra történő hangfájl-feltöltést, a feldolgozás robusztus meghívását és az eredményként kapott leiratok (transzkriptek) mentését. Nagyméretű fájlok esetén a program helyben, *ffmpeg*-gel darabolja a bemenetet, majd az egyes részekből összeillesztett szöveget menti.
+
+### Fő funkciók
+
+* Jogosultság-szűrés: csak az *ALLOWED_EXTS* kiterjesztésű fájlokat kezeli.
+* *visited.txt* alapú deduplikáció: ugyanazt a fájlnevet csak egyszer dolgozza fel.
+* Nagy fájlok darabolása: *ffmpeg* stream-copy, sikertelenség esetén visszaesés újrakódolásra.
+* Gradio API integráció: *fn_index* felderítése `/config` végponton, feltöltés `/upload`, predikció `/api/predict`.
+* Időtúllépés, hibatűrés: konfigurálható time-outok, többszöri próbálkozás (backoff-fázisokkal), opcionális újrafeltöltés nagy fájloknál.
+* Kimenet: szövegfájlok az eredeti könyvtárstruktúra megőrzésével az *OUTPUT_DIR*-be.
+
+|===
+|Változó | Jelentés
+
+|`FILES_DIR` | Bemeneti hangfájlok gyökérmappája (rekurzív bejárás)
+|`OUTPUT_DIR` | Leiratok mentési gyökérmappája (eredeti relatív útvonal megtartása mellett)
+|`VISITED_FILE` | Fájlnevek listája, amelyeket már feldolgozott (duplikált futások elkerülésére)
+|`CHUNK_BASE_DIR` | Ideiglenes könyvtár a darabolt hangrészleteknek
+|===
+
+|===
+|Név | Típus | Alapérték | Leírás
+
+|`BASE_URL` | str | `https://phon.nytud.hu/beast2/` | A szerver amihez kapcsolodni akarunk
+|`ALLOWED_EXTS` | set\[str] | `{".mp3", ".m4a"}` | Engedélyezett kiterjesztések (case-insensitive)
+|`EXTRA_OPTIONS` | list\[str] | `["Punctuation and Capitalization", "Diarization"]` | A Gradio UI-ban pipált opciók nevei; a `data` mező 2. paramétereként megy át
+|`HTTP_TIMEOUT_CONN` | int | `3000` | Kapcsolódási time-out (másodperc)
+|`HTTP_TIMEOUT_READ` | int | `6000` | Olvasási time-out a `/api/predict`-hez (másodperc)
+|`HTTP_TIMEOUT_UPLD` | int | `3000` | Olvasási time-out az `/upload` híváshoz (másodperc)
+|`MAX_RETRIES` | int | `3` | Predikció próbálkozások maximális száma
+|`BACKOFF_SEC` | int | `5` | Késleltetés a próbálkozások között
+|`SIZE_SPLIT_MB` | int | `50` | Ez felett nagynak minősül a fájl → darabolás
+|`CHUNK_SEC` | int | `600` | Darab hossza másodpercben (alap: 10 perc)
+|`REUPLOAD_EACH_TRY_FOR_BIG` | bool | `True` | Nagy fájloknál sikertelen próbálkozás után újra-feltöltés
+
+|===
+
+
+## Fő komponensek
+### Naplózás és időmérés
+
+* `log(msg)`, `step(title)`, `say_time()`, `timer(action)` készen áll a folyamat átlátható nyomon követésére.
+
+### Deduplikáció: `visited.txt`
+
+* `add_to_visited(name)`, `is_visited(name)` biztosítja, hogy ugyanazt a *fájlnév* stringet csak egyszer dolgozza fel.
+* Tipp: ha azonos nevű, de eltérő útvonalú fájlokat is külön szeretnél kezelni, bővítsd a tárolt kulcsot *relatív útra*.
+
+### Darabolás: `ffmpeg_split()`
+
+* Kimeneti mappa: `chunks_tmp/<sanitizált_alapnév>/`.
+
+### Hibatűrés és time-outok
+
+* `MAX_RETRIES`, `BACKOFF_SEC` paraméterezhető.
+* Nagy fájlok esetén (ha `REUPLOAD_EACH_TRY_FOR_BIG=True`) sikertelen próbálkozás után újra-feltölt.
+* HTTP time-outok külön választhatók: kapcsolat, feltöltés olvasás, predikció olvasás.
+
+### Kimenet
+
+* `save_transcript()` létrehozza a kimeneti `.txt` fájlt; opcionális `res_id` fejléc-sorral.
+* A kimenet alapértelmezésben
+  \*\* üres esetben: `[No output]` felirat,
+  \*\* különben a kiválasztott (leghosszabb) nyers szöveg.
+
+## Példa futási napló (részlet)
+
+---------
+
+ python3 main.py
+
+[09:22:54] [BOOT] Using BASE_URL: [https://phon.nytud.hu/beast2/](https://phon.nytud.hu/beast2/)
+[11:16:58] [STEP] Discover fn_index via GET https://phon.nytud.hu/beast2/config
+[11:16:59] [OK] fn_index discovered: 3
+
+======================================================================
+== PROCESS FILE: MIA-810004_0387=#387. Gépi adás.mp3
+======================================================================
+Timer started...
+processing your file...
+[11:16:59] [STEP] UPLOAD -> https://phon.nytud.hu/beast2/upload
+[11:16:59]       file: MIA-810004_0387=#387. Gépi adás.mp3 (48.65 MB)
+[11:16:59] [OK] Upload response (list path): /tmp/gradio/15a023b668a302215325abcf63b69ff8a0493687518b80f565610af33cc02ef5/MIA-810004_0387387. Gépi kaksi adás.mp3
+[11:16:59] [DEBUG] /api/predict (with options) attempt 1/3
+[11:16:59] [TRY] POST https://phon.nytud.hu/beast2/api/predict  (with options (fn_index))  timeout=6000s
+
+
+---------
+## Telepítési tippek
+
+*Telepítsd a függőségeket (például venv-ben)
+
+*python -m venv .venv
+
+*source .venv/bin/activate
+
+*pip install -r requirements.txt
+
+*python3 main.py
