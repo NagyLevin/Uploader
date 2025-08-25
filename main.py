@@ -32,7 +32,7 @@ BACKOFF_SEC       = 5         # sleep between retries
 VISITED_FILE      = pathlib.Path("./visited.txt") #this is where it puts the names of the files that it worked on
 
 # --- Chunking config ---
-SIZE_SPLIT_MB              = 50     # if file size >= 50 MB, split into chunks
+SIZE_SPLIT_MB              = 25     # if file size >= 25 MB, split into chunks
 CHUNK_SEC                  = 600    # split into 10-minute chunks
 REUPLOAD_EACH_TRY_FOR_BIG  = True   # for big files, re-upload before each retry
 CHUNK_BASE_DIR             = pathlib.Path(__file__).parent / "chunks_tmp" #folder for the chunks
