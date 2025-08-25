@@ -1,34 +1,41 @@
-# Beast Upload Automate: `main.py`
-by Levin
-\:toc:
+= Beast Upload Automate: `main.py`
+Levin
+:toc:
 
-### Cél és összefoglaló
-Ez a script (\`main.py`) automatizálja a *Beast* (Gradio-alapú) ASR szolgáltatásra történő hangfájl-feltöltést, a feldolgozás robusztus meghívását és az eredményként kapott leiratok (transzkriptek) mentését. Nagyméretű fájlok esetén a program helyben, *ffmpeg*-gel darabolja a bemenetet, majd az egyes részekből összeillesztett szöveget menti.
+== Cél és összefoglaló
+Ez a script (`main.py`) automatizálja a *Beast* (Gradio-alapú) ASR szolgáltatásra történő hangfájl-feltöltést, a feldolgozás robusztus meghívását és az eredményként kapott leiratok (transzkriptek) mentését.  
+Nagyméretű fájlok esetén a program helyben, *ffmpeg*-gel darabolja a bemenetet, majd az egyes részekből összeillesztett szöveget menti.  
+A `visited.txt` biztosítja, hogy ugyanazt a fájlt csak egyszer dolgozza fel, a `timeouts.txt` pedig azon fájlokat listázza, amelyek feldolgozása chunk-hiba miatt megszakadt. Ezeket a következő futásokkor újrapróbálja.
 
-### Fő funkciók
+== Fő funkciók
 
 * Jogosultság-szűrés: csak az *ALLOWED_EXTS* kiterjesztésű fájlokat kezeli.
-* *visited.txt* alapú deduplikáció: ugyanazt a fájlnevet csak egyszer dolgozza fel.
+* `visited.txt` alapú deduplikáció: ugyanazt a fájlnevet csak egyszer dolgozza fel.
+* `timeouts.txt` kezelés: ha egy fájl feldolgozása bármelyik chunk hibája miatt megszakad, nem kerül a `visited.txt`-be, hanem a `timeouts.txt`-be íródik. Így a program a következő futásban újrapróbálkozik vele.
 * Nagy fájlok darabolása: *ffmpeg* stream-copy, sikertelenség esetén visszaesés újrakódolásra.
+* All-or-nothing feldolgozás: ha egyetlen chunk hibás, a teljes fájl feldolgozását megszakítja, és átugrik a következő fájlra.
 * Gradio API integráció: *fn_index* felderítése `/config` végponton, feltöltés `/upload`, predikció `/api/predict`.
 * Időtúllépés, hibatűrés: konfigurálható time-outok, többszöri próbálkozás (backoff-fázisokkal), opcionális újrafeltöltés nagy fájloknál.
 * Kimenet: szövegfájlok az eredeti könyvtárstruktúra megőrzésével az *OUTPUT_DIR*-be.
 
+[cols="1,3",options="header"]
 |===
 |Változó | Jelentés
 
 |`FILES_DIR` | Bemeneti hangfájlok gyökérmappája (rekurzív bejárás)
 |`OUTPUT_DIR` | Leiratok mentési gyökérmappája (eredeti relatív útvonal megtartása mellett)
-|`VISITED_FILE` | Fájlnevek listája, amelyeket már feldolgozott (duplikált futások elkerülésére)
+|`VISITED_FILE` | Fájlnevek listája, amelyeket már sikeresen feldolgozott
+|`TIMEOUTS_FILE` | Fájlnevek listája, amelyek chunk-hiba miatt megszakadtak
 |`CHUNK_BASE_DIR` | Ideiglenes könyvtár a darabolt hangrészleteknek
 |===
 
+[cols="1,1,1,3",options="header"]
 |===
 |Név | Típus | Alapérték | Leírás
 
-|`BASE_URL` | str | `https://phon.nytud.hu/beast2/` | A szerver amihez kapcsolodni akarunk
-|`ALLOWED_EXTS` | set\[str] | `{".mp3", ".m4a"}` | Engedélyezett kiterjesztések (case-insensitive)
-|`EXTRA_OPTIONS` | list\[str] | `["Punctuation and Capitalization", "Diarization"]` | A Gradio UI-ban pipált opciók nevei; a `data` mező 2. paramétereként megy át
+|`BASE_URL` | str | `https://phon.nytud.hu/beast2/` | A szerver amihez kapcsolódunk
+|`ALLOWED_EXTS` | set[str] | `{".mp3", ".m4a"}` | Engedélyezett kiterjesztések
+|`EXTRA_OPTIONS` | list[str] | `["Punctuation and Capitalization", "Diarization"]` | Gradio UI opciók
 |`HTTP_TIMEOUT_CONN` | int | `3000` | Kapcsolódási time-out (másodperc)
 |`HTTP_TIMEOUT_READ` | int | `6000` | Olvasási time-out a `/api/predict`-hez (másodperc)
 |`HTTP_TIMEOUT_UPLD` | int | `3000` | Olvasási time-out az `/upload` híváshoz (másodperc)
@@ -37,68 +44,74 @@ Ez a script (\`main.py`) automatizálja a *Beast* (Gradio-alapú) ASR szolgálta
 |`SIZE_SPLIT_MB` | int | `50` | Ez felett nagynak minősül a fájl → darabolás
 |`CHUNK_SEC` | int | `600` | Darab hossza másodpercben (alap: 10 perc)
 |`REUPLOAD_EACH_TRY_FOR_BIG` | bool | `True` | Nagy fájloknál sikertelen próbálkozás után újra-feltöltés
-
 |===
 
+== Fő komponensek
 
-## Fő komponensek
-### Naplózás és időmérés
+=== Naplózás és időmérés
 
-* `log(msg)`, `step(title)`, `say_time()`, `timer(action)` készen áll a folyamat átlátható nyomon követésére.
+* `log(msg)`, `step(title)`, `say_time()`, `timer(action)` segíti a folyamat nyomon követését.
 
-### Deduplikáció: `visited.txt`
+=== Deduplikáció: `visited.txt`
 
-* `add_to_visited(name)`, `is_visited(name)` biztosítja, hogy ugyanazt a *fájlnév* stringet csak egyszer dolgozza fel.
-* Tipp: ha azonos nevű, de eltérő útvonalú fájlokat is külön szeretnél kezelni, bővítsd a tárolt kulcsot *relatív útra*.
+* `add_to_visited(name)`, `is_visited(name)` gondoskodik róla, hogy egy fájl nevét csak egyszer dolgozza fel.
+* Tipp: ha azonos nevű, de eltérő könyvtárban lévő fájlokat külön akarsz kezelni, használd a relatív útvonalat.
 
-### Darabolás: `ffmpeg_split()`
+=== Hibás fájlok kezelése: `timeouts.txt`
 
-* Kimeneti mappa: `chunks_tmp/<sanitizált_alapnév>/`.
+* `add_to_timeouts(name)`: ha egy fájl feldolgozása megszakad (pl. egy chunk hiba miatt), bekerül a `timeouts.txt`-be.  
+* Ezek a fájlok nem kerülnek a `visited.txt`-be, tehát később újra megpróbálja feldolgozni őket.
 
-### Hibatűrés és time-outok
+=== Darabolás: `ffmpeg_split()`
 
-* `MAX_RETRIES`, `BACKOFF_SEC` paraméterezhető.
-* Nagy fájlok esetén (ha `REUPLOAD_EACH_TRY_FOR_BIG=True`) sikertelen próbálkozás után újra-feltölt.
-* HTTP time-outok külön választhatók: kapcsolat, feltöltés olvasás, predikció olvasás.
+* Kimeneti mappa: `chunks_tmp/<egyszerüsített_név>/`.
+* Első próbálkozás stream-copy, ha hibás → fallback újrakódolás.
 
-### Kimenet
+=== Hibatűrés és time-outok
 
-* `save_transcript()` létrehozza a kimeneti `.txt` fájlt; opcionális `res_id` fejléc-sorral.
-* A kimenet alapértelmezésben
-  \*\* üres esetben: `[No output]` felirat,
-  \*\* különben a kiválasztott (leghosszabb) nyers szöveg.
+* `MAX_RETRIES`, `BACKOFF_SEC` szabályozza a próbálkozásokat.
+* Nagy fájloknál (`REUPLOAD_EACH_TRY_FOR_BIG=True`) sikertelen próbálkozás után újra feltölti a darabot.
+* HTTP time-outok külön konfigurálhatók.
 
-## Példa futási napló (részlet)
+=== Kimenet
 
----------
+* `save_transcript()` létrehozza a kimeneti `.txt` fájlt.
+* Üres esetben `[No output]`, különben a kiválasztott (pl. leghosszabb) szöveg kerül mentésre.
 
+== Példa futási napló (részlet)
+
+----
  python3 main.py
 
-[09:22:54] [BOOT] Using BASE_URL: [https://phon.nytud.hu/beast2/](https://phon.nytud.hu/beast2/)
+[09:22:54] [BOOT] Using BASE_URL: https://phon.nytud.hu/beast2/
 [11:16:58] [STEP] Discover fn_index via GET https://phon.nytud.hu/beast2/config
 [11:16:59] [OK] fn_index discovered: 3
 
 ======================================================================
-== PROCESS FILE: MIA-810004_0387=#387. Gépi adás.mp3
+== PROCESS FILE: sample.mp3
 ======================================================================
 Timer started...
 processing your file...
 [11:16:59] [STEP] UPLOAD -> https://phon.nytud.hu/beast2/upload
-[11:16:59]       file: MIA-810004_0387=#387. Gépi adás.mp3 (48.65 MB)
-[11:16:59] [OK] Upload response (list path): /tmp/gradio/15a023b668a302215325abcf63b69ff8a0493687518b80f565610af33cc02ef5/MIA-810004_0387387. Gépi adás.mp3
+[11:16:59]       file: sample.mp3 (48.65 MB)
+[11:16:59] [OK] Upload response (list path): /tmp/gradio/....../sample.mp3
 [11:16:59] [DEBUG] /api/predict (with options) attempt 1/3
 [11:16:59] [TRY] POST https://phon.nytud.hu/beast2/api/predict  (with options (fn_index))  timeout=6000s
 
+[ABORT FILE] sample.mp3 aborted due to chunk failure: Chunk 2/5 returned empty output
+→ sample.mp3 added to timeouts.txt
+----
 
----------
-## Telepítési tippek
 
-* Telepítsd a függőségeket (például venv-ben)
+*Megjegyzés:* később készíthető külön `retry_timeouts.py`, ami explicit végigmegy a `timeouts.txt`-n.
 
-* python -m venv .venv
+== Telepítési tippek
 
-* source .venv/bin/activate
-
-* pip install -r requirements.txt
-
-* python3 main.py
+* Telepítsd a függőségeket (venv ajánlott):
++
+----
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 main.py
+----
