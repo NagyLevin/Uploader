@@ -350,31 +350,70 @@ def process_file_with_retry(api: GradioClient, f: pathlib.Path) -> str:
     texts = GradioClient.extract_texts(best_resp)
     return pick_best_text(texts)
 
+"""
+Nagy bigger files are getting split into chunks
+"""
+
 def process_maybe_chunked(api: GradioClient, f: pathlib.Path) -> str:
-    """If file is large, split locally and merge transcripts, otherwise process normally."""
+    """
+    All-or-nothing: ha nagy fájl és bármelyik chunk hibázik vagy üres,
+    az egész fájl feldolgozását megszakítjuk és kivételt dobunk.
+    Kis fájlnál a régi retry-logika él a process_file_with_retry-ben.
+    """
     if not is_big_file(f):
+        # Kis fájl: ha ez hibázik, felmegy a kivétel a main()-ig (és az ott kezeli).
         return process_file_with_retry(api, f)
 
-    log("[INFO] Big file detected -> splitting locally to avoid 502 timeouts...")
+    log("[INFO] Big file detected -> splitting locally...")
     parts = ffmpeg_split(f, CHUNK_SEC)
+    if not parts:
+        cleanup_chunks(f)
+        raise RuntimeError("No chunks created by ffmpeg_split")
+
     merged: List[str] = []
+    total = len(parts)
+
     for i, part in enumerate(parts, 1):
-        step(f"PROCESS CHUNK {i}/{len(parts)}: {part.name}")
+        step(f"PROCESS CHUNK {i}/{total}: {part.name}")
         say_time()
         try:
             text = process_file_with_retry(api, part)
         except Exception as e:
-            log(f"[ERROR] Predict failed for chunk {i}: {e}")
-            text = ""
+            cleanup_chunks(f)
+            raise RuntimeError(f"Chunk {i}/{total} failed: {e}") from e
 
-        if text:
-            # Add clean text without chunk headers; use explicit \n\n for spacing
-            merged.append(text.strip())
+        # Üres/whitespace kimenet is hibának számít
+        if not text or not text.strip():
+            cleanup_chunks(f)
+            raise RuntimeError(f"Chunk {i}/{total} returned empty output")
 
-    # Join chunks with a blank line between them, and end file with a newline if not empty
+        merged.append(text.strip())
+
+    # Minden chunk sikerült; normál összeillesztés és takarítás
     final_text = "\n\n".join(merged).strip() + ("\n" if merged else "")
     cleanup_chunks(f)
     return final_text
+
+
+"""
+If the server is down all not processsed files are saved just in chase
+"""
+
+TIMEOUTS_FILE = pathlib.Path("./timeouts.txt")
+
+def add_to_timeouts(name: str) -> None:
+    """
+    Ha egy fájl feldolgozása hibával megszakad,
+    a nevét kiírjuk a timeouts.txt fájlba.
+    Nem duplikál, csak egyszer szerepel minden fájl.
+    """
+    TIMEOUTS_FILE.touch(exist_ok=True)
+    cur = set(
+        x.strip() for x in TIMEOUTS_FILE.read_text(encoding="utf-8").splitlines() if x.strip()
+    )
+    if name not in cur:
+        with TIMEOUTS_FILE.open("a", encoding="utf-8") as f:
+            f.write(name + "\n")
 
 
 """
@@ -413,10 +452,11 @@ def main():
         print("processing your file...")
 
         try:
-            best_text = process_maybe_chunked(api, f)
+            best_text = process_maybe_chunked(api, f) #probáld meg chunckokra bontani
         except Exception as e:
-            log(f"[ERROR] Predict failed: {e}")
+            log(f"[ABORT FILE] {f.name} aborted due to chunk failure: {e}")
             log(traceback.format_exc(limit=2).strip())
+            add_to_timeouts(f.name)   # <-- ide került be
             continue
 
         log(f"[INFO] Picked best length={len(best_text)}")
