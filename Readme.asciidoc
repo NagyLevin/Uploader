@@ -17,6 +17,8 @@ A `visited.txt` biztosítja, hogy ugyanazt a fájlt csak egyszer dolgozza fel, a
 * Gradio API integráció: *fn_index* felderítése `/config` végponton, feltöltés `/upload`, predikció `/api/predict`.
 * Időtúllépés, hibatűrés: konfigurálható time-outok, többszöri próbálkozás (backoff-fázisokkal), opcionális újrafeltöltés nagy fájloknál.
 * Kimenet: szövegfájlok az eredeti könyvtárstruktúra megőrzésével az *OUTPUT_DIR*-be.
+* `timeouts.txt` szinkronban tartása: ha egy fájl sikeresen feldolgozásra került és bekerül a `visited.txt`-be, a fájlnév automatikusan eltávolításra kerül a `timeouts.txt`-ből (idempotens tisztítás).
+
 
 [cols="1,3",options="header"]
 |===

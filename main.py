@@ -92,10 +92,7 @@ def add_to_visited(name: str) -> None:
 Removes the filename from timeouts if its present
 """
 def remove_from_timeouts(name: str) -> None:
-    """
-    Ha a name szerepel a timeouts.txt-ben, töröljük onnan.
-    Idempotens: ha nincs benne, nem történik változás.
-    """
+
     TIMEOUTS_FILE.touch(exist_ok=True)
     lines = TIMEOUTS_FILE.read_text(encoding="utf-8").splitlines()
     new_lines = [x for x in lines if x.strip() and x.strip() != name]
@@ -103,8 +100,7 @@ def remove_from_timeouts(name: str) -> None:
         with TIMEOUTS_FILE.open("w", encoding="utf-8") as f:
             f.write("\n".join(new_lines) + ("\n" if new_lines else ""))
         log(f"[CLEANUP] Removed '{name}' from {TIMEOUTS_FILE.name}")
-    else:
-        log(f"[INFO] '{name}' not present in {TIMEOUTS_FILE.name}")
+    
 
 
 """
