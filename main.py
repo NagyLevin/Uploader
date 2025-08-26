@@ -418,9 +418,7 @@ TIMEOUTS_FILE = pathlib.Path("./timeouts.txt")
 
 def add_to_timeouts(name: str) -> None:
     """
-    Ha egy fájl feldolgozása hibával megszakad,
-    a nevét kiírjuk a timeouts.txt fájlba.
-    Nem duplikál, csak egyszer szerepel minden fájl.
+    If the file prcessing is halted, its name will get added to timeouts
     """
     TIMEOUTS_FILE.touch(exist_ok=True)
     cur = set(
