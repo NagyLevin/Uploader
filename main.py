@@ -17,8 +17,6 @@ import requests
 Config part
 """
 BASE_URL   = "https://phon.nytud.hu/beast2/"
-#FILES_DIR  = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/audio")
-#OUTPUT_DIR = pathlib.Path("/mnt/c/Users/Levinwork/Documents/Nytud/1feladat/celanyag/javtest")
 FILES_DIR  = pathlib.Path("/home/datasets/raw-data/podcasts") #this is the folder where it gets the files that will be uploaded
 OUTPUT_DIR = pathlib.Path("/home/szabol/leiratok") #this is where it puts the txt
 

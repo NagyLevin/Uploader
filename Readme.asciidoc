@@ -2,6 +2,18 @@
 Levin
 :toc:
 
+== Telepítési tippek
+
+* Telepítsd a függőségeket (venv ajánlott):
++
+----
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 main.py
+----
+
+
 == Cél és összefoglaló
 Ez a script (`main.py`) automatizálja a *Beast* (Gradio-alapú) ASR szolgáltatásra történő hangfájl-feltöltést, a feldolgozás robusztus meghívását és az eredményként kapott leiratok (transzkriptek) mentését.  
 Nagyméretű fájlok esetén a program helyben, *ffmpeg*-gel darabolja a bemenetet, majd az egyes részekből összeillesztett szöveget menti.  
@@ -107,13 +119,3 @@ processing your file...
 
 *Megjegyzés:* később készíthető külön `retry_timeouts.py`, ami explicit végigmegy a `timeouts.txt`-n.
 
-== Telepítési tippek
-
-* Telepítsd a függőségeket (venv ajánlott):
-+
-----
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python3 main.py
-----
